@@ -6,15 +6,18 @@ Replaces the baseline CSV-based engine with a SQLite-backed implementation.
 Key optimizations over baseline:
   1. SQL-level filtering — only rows matching the requested NAICS code are
      retrieved, instead of loading entire CSV files into memory.
-  2. Precomputed UTM centroids — CBG centroids are stored in the database,
-     eliminating the need to load and project the full GeoJSON at runtime.
+  2. Precomputed CBG centroids — centroids (lat/lon) are stored in the
+     database, eliminating the need to load the full GeoJSON at runtime.
   3. Indexed queries — the database uses indexes on naics_code, placekey,
      and cbg_id for fast lookups.
-  4. Lightweight distance calculation — candidate point is projected to UTM
-     using pyproj and Euclidean distance is computed via math, avoiding
-     heavy geopandas geometry operations at query time.
+  4. Lightweight distance calculation — haversine formula computes distances
+     in meters using only the math standard library, avoiding heavy
+     geopandas geometry operations at query time.
   5. Vectorized computation — pandas is used for the Huff probability
      math after data retrieval, keeping the computation efficient.
+
+No external geo libraries needed at runtime (no geopandas, no pyproj).
+Only dependencies: sqlite3 (stdlib), math (stdlib), time (stdlib), pandas.
 
 Function signature and return structure match the baseline exactly so that
 app.py requires no changes.
@@ -26,7 +29,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from pyproj import Transformer
+import numpy as np
 
 # -------------------------------------------------------------------
 # Configuration
@@ -34,8 +37,45 @@ from pyproj import Transformer
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "Data" / "your_team.db"
 
-# Reusable transformer: WGS84 (lon/lat) → UTM Zone 19N (meters)
-_transformer = Transformer.from_crs("EPSG:4326", "EPSG:26919", always_xy=True)
+# Earth radius in meters for haversine
+_EARTH_RADIUS_M = 6_371_000.0
+
+
+# -------------------------------------------------------------------
+# Haversine distance (no external geo libraries needed)
+# -------------------------------------------------------------------
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    """
+    Compute the great-circle distance in meters between two points
+    given as (lat, lon) in decimal degrees.
+    """
+    lat1, lon1, lat2, lon2 = (
+        math.radians(lat1),
+        math.radians(lon1),
+        math.radians(lat2),
+        math.radians(lon2),
+    )
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return 2 * _EARTH_RADIUS_M * math.asin(math.sqrt(a))
+
+
+def _haversine_vectorized(lat1, lon1, lat2_arr, lon2_arr):
+    """
+    Vectorized haversine: single point (lat1, lon1) to arrays of points.
+    Returns distances in meters as a numpy array.
+    """
+    lat1_r = np.radians(lat1)
+    lon1_r = np.radians(lon1)
+    lat2_r = np.radians(lat2_arr.values)
+    lon2_r = np.radians(lon2_arr.values)
+
+    dlat = lat2_r - lat1_r
+    dlon = lon2_r - lon1_r
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_r) * np.cos(lat2_r) * np.sin(dlon / 2) ** 2
+    return 2 * _EARTH_RADIUS_M * np.arcsin(np.sqrt(a))
 
 
 # -------------------------------------------------------------------
@@ -173,20 +213,16 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     cbg_ids = list(cbg_agg["cbg_id"])
     cbg_ph = ",".join("?" for _ in cbg_ids)
     cbg_centroids = pd.read_sql_query(
-        f"SELECT cbg_id, centroid_utm_x, centroid_utm_y FROM cbgs WHERE cbg_id IN ({cbg_ph})",
+        f"SELECT cbg_id, centroid_lat, centroid_lon FROM cbgs WHERE cbg_id IN ({cbg_ph})",
         conn,
         params=cbg_ids,
     )
     cbg_agg = cbg_agg.merge(cbg_centroids, on="cbg_id")
 
-    # Project candidate point to UTM Zone 19N
-    cand_utm_x, cand_utm_y = _transformer.transform(candidate_lon, candidate_lat)
-
-    # Euclidean distance in meters (UTM coordinates)
-    cbg_agg["distance"] = (
-        ((cbg_agg["centroid_utm_x"] - cand_utm_x) ** 2
-         + (cbg_agg["centroid_utm_y"] - cand_utm_y) ** 2)
-        ** 0.5
+    # Vectorized haversine distance in meters
+    cbg_agg["distance"] = _haversine_vectorized(
+        candidate_lat, candidate_lon,
+        cbg_agg["centroid_lat"], cbg_agg["centroid_lon"],
     )
 
     # ------------------------------------------------------------------
@@ -303,8 +339,8 @@ def run_huff_model(
         "runtime_ms": runtime_ms,
         "notes": (
             "V3 Huff model (Team 3) — SQLite-backed with indexed queries, "
-            "precomputed UTM centroids, and SQL-level NAICS filtering. "
-            "Data source: Data/your_team.db"
+            "precomputed CBG centroids, haversine distance, and SQL-level "
+            "NAICS filtering. Data source: Data/your_team.db"
         ),
         "inputs": {
             "candidate_lat": candidate_lat,
