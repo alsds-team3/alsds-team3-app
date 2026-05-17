@@ -35,7 +35,7 @@ import numpy as np
 # Configuration
 # -------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "Data" / "your_team.db"
+DB_PATH = BASE_DIR / "Data" / "team_3.db"
 
 # Earth radius in meters for haversine
 _EARTH_RADIUS_M = 6_371_000.0
@@ -141,7 +141,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     # ------------------------------------------------------------------
     cur.execute(
         """SELECT placekey, location_name, latitude, longitude, wkt_area_sq_meters
-           FROM pois WHERE naics_code = ?""",
+           FROM worchester_businesses WHERE naics_code = ?""",
         (naics,),
     )
     poi_rows = cur.fetchall()
