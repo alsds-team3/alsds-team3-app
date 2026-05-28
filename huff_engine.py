@@ -1,55 +1,47 @@
 """
-Huff Model Engine — V3 (Team 3 Optimized)
+Huff Model Engine — V4 (Team 3, Azure SQL)
 
-Replaces the baseline CSV-based engine with a SQLite-backed implementation.
+Module 7 upgrade of the V3 SQLite engine. Queries Azure SQL via
+db.get_connection() instead of opening Data/team_3.db directly.
 
-Key optimizations over baseline:
-  1. SQL-level filtering — only rows matching the requested NAICS code are
-     retrieved, instead of loading entire CSV files into memory.
-  2. Precomputed CBG centroids — centroids (lat/lon) are stored in the
-     database, eliminating the need to load the full GeoJSON at runtime.
-  3. Indexed queries — the database uses indexes on naics_code, placekey,
-     and cbg_id for fast lookups.
-  4. Lightweight distance calculation — haversine formula computes distances
-     in meters using only the math standard library, avoiding heavy
-     geopandas geometry operations at query time.
-  5. Vectorized computation — pandas is used for the Huff probability
-     math after data retrieval, keeping the computation efficient.
+Preserves:
+  - The exact run_huff_model(...) signature called by app.py
+  - The return shape (predicted_visits, market_share, competitors,
+    runtime_ms, notes, inputs) read by app.py's generate_explanation()
+  - The V3 indexed-query, vectorized-math execution pattern
 
-No external geo libraries needed at runtime (no geopandas, no pyproj).
-Only dependencies: sqlite3 (stdlib), math (stdlib), time (stdlib), pandas.
-
-Function signature and return structure match the baseline exactly so that
-app.py requires no changes.
+Differences from V3:
+  - sqlite3 -> pyodbc via db.get_connection()
+  - SQLite-style "?" placeholders are still used (pyodbc accepts them)
+  - sqlite3.Row.fetchone() became a regular pyodbc tuple, so the param
+    lookup unpacks by index instead of by key
+  - Same SQL schema, same column names, same return values
 """
 
 import math
-import sqlite3
 import time
-from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import numpy as np
+import pyodbc
+
+from db import get_connection
+
 
 # -------------------------------------------------------------------
-# Configuration
+# Constants
 # -------------------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "Data" / "team_3.db"
 
-# Earth radius in meters for haversine
 _EARTH_RADIUS_M = 6_371_000.0
 
 
 # -------------------------------------------------------------------
-# Haversine distance (no external geo libraries needed)
+# Haversine distance (unchanged from V3)
 # -------------------------------------------------------------------
 
 def _haversine_m(lat1, lon1, lat2, lon2):
-    """
-    Compute the great-circle distance in meters between two points
-    given as (lat, lon) in decimal degrees.
-    """
+    """Great-circle distance in meters between two (lat, lon) points."""
     lat1, lon1, lat2, lon2 = (
         math.radians(lat1),
         math.radians(lon1),
@@ -58,15 +50,15 @@ def _haversine_m(lat1, lon1, lat2, lon2):
     )
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    )
     return 2 * _EARTH_RADIUS_M * math.asin(math.sqrt(a))
 
 
 def _haversine_vectorized(lat1, lon1, lat2_arr, lon2_arr):
-    """
-    Vectorized haversine: single point (lat1, lon1) to arrays of points.
-    Returns distances in meters as a numpy array.
-    """
+    """Vectorized haversine: one point against arrays of points, in meters."""
     lat1_r = np.radians(lat1)
     lon1_r = np.radians(lon1)
     lat2_r = np.radians(lat2_arr.values)
@@ -74,19 +66,11 @@ def _haversine_vectorized(lat1, lon1, lat2_arr, lon2_arr):
 
     dlat = lat2_r - lat1_r
     dlon = lon2_r - lon1_r
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_r) * np.cos(lat2_r) * np.sin(dlon / 2) ** 2
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat1_r) * np.cos(lat2_r) * np.sin(dlon / 2) ** 2
+    )
     return 2 * _EARTH_RADIUS_M * np.arcsin(np.sqrt(a))
-
-
-# -------------------------------------------------------------------
-# Database helper
-# -------------------------------------------------------------------
-
-def _get_connection():
-    """Return a SQLite connection to the team database."""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 # -------------------------------------------------------------------
@@ -95,34 +79,15 @@ def _get_connection():
 
 def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     """
-    Compute predicted visits and market share for a candidate store.
+    Run the Huff gravity computation against Azure SQL.
 
-    All data is retrieved from the SQLite database using indexed queries
-    filtered to the requested NAICS code.
-
-    Parameters
-    ----------
-    naics : int
-        NAICS code identifying the retail category.
-    candidate_lon : float
-        Longitude of the candidate store (WGS84).
-    candidate_lat : float
-        Latitude of the candidate store (WGS84).
-    floor_area : float
-        Floor area of the candidate store in square meters.
-    conn : sqlite3.Connection
-        Active database connection.
-
-    Returns
-    -------
-    tuple
-        (total_predicted_visits, market_share_proxy, competitors_list)
+    Returns (total_predicted_visits, market_share_proxy, competitors_list),
+    matching the V3 contract exactly.
     """
-
     cur = conn.cursor()
 
     # ------------------------------------------------------------------
-    # Step 1: Retrieve calibrated parameters for the NAICS code
+    # Step 1: Calibrated parameters for this NAICS code
     # ------------------------------------------------------------------
     cur.execute(
         "SELECT alpha, beta FROM parameters WHERE naics_code = ?",
@@ -133,36 +98,35 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
         raise ValueError(
             f"No calibrated alpha/beta parameters found for NAICS code {naics}."
         )
-    alpha = param_row["alpha"]
-    beta = param_row["beta"]
+    # pyodbc returns positional tuples, not dict-like Rows
+    alpha = float(param_row[0])
+    beta = float(param_row[1])
 
     # ------------------------------------------------------------------
-    # Step 2: Retrieve competing POIs for this NAICS code
+    # Step 2: Competing POIs for this NAICS code
     # ------------------------------------------------------------------
-    cur.execute(
+    naics_pois = pd.read_sql(
         """SELECT placekey, location_name, latitude, longitude, wkt_area_sq_meters
-           FROM worchester_businesses WHERE naics_code = ?""",
-        (naics,),
+           FROM worchester_businesses
+           WHERE naics_code = ?""",
+        conn,
+        params=[naics],
     )
-    poi_rows = cur.fetchall()
-    if not poi_rows:
+    if naics_pois.empty:
         raise ValueError(f"No competing POIs found for NAICS code {naics}.")
 
-    naics_pois = pd.DataFrame(
-        [dict(r) for r in poi_rows],
-        columns=["placekey", "location_name", "latitude", "longitude", "wkt_area_sq_meters"],
-    )
-    relevant_placekeys = set(naics_pois["placekey"])
+    relevant_placekeys = naics_pois["placekey"].dropna().astype(str).unique().tolist()
     placeholders = ",".join("?" for _ in relevant_placekeys)
-    pk_list = list(relevant_placekeys)
 
     # ------------------------------------------------------------------
-    # Step 3: Retrieve distances for relevant POIs
+    # Step 3: Distances for relevant POIs
     # ------------------------------------------------------------------
-    dist_df = pd.read_sql_query(
-        f"SELECT cbg_id, placekey, distance_m FROM distances WHERE placekey IN ({placeholders})",
+    dist_df = pd.read_sql(
+        f"""SELECT cbg_id, placekey, distance_m
+            FROM distances
+            WHERE placekey IN ({placeholders})""",
         conn,
-        params=pk_list,
+        params=relevant_placekeys,
     )
 
     # ------------------------------------------------------------------
@@ -176,12 +140,14 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     )
 
     # ------------------------------------------------------------------
-    # Step 5: Retrieve and merge visit counts
+    # Step 5: Visit counts
     # ------------------------------------------------------------------
-    visits_df = pd.read_sql_query(
-        f"SELECT cbg_id, placekey, visit_count FROM visits WHERE placekey IN ({placeholders})",
+    visits_df = pd.read_sql(
+        f"""SELECT cbg_id, placekey, visit_count
+            FROM visits
+            WHERE placekey IN ({placeholders})""",
         conn,
-        params=pk_list,
+        params=relevant_placekeys,
     )
     dist_df = dist_df.merge(
         visits_df, on=["cbg_id", "placekey"], how="left"
@@ -189,7 +155,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     dist_df["visit_count"] = dist_df["visit_count"].fillna(0)
 
     # ------------------------------------------------------------------
-    # Step 6: Compute attraction for each existing CBG-POI pair
+    # Step 6: Attraction per CBG-POI pair
     # ------------------------------------------------------------------
     dist_df["uik"] = (
         dist_df["wkt_area_sq_meters"] ** alpha
@@ -204,29 +170,36 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
         .reset_index()
         .rename(columns={"uik": "sum_uik", "visit_count": "sum_visits"})
     )
-    # Exclude CBGs with zero observed visits for this category
     cbg_agg = cbg_agg[cbg_agg["sum_visits"] > 0].copy()
 
+    if cbg_agg.empty:
+        # No CBGs with observed visits — model can't run.
+        return 0.0, 0.0, []
+
     # ------------------------------------------------------------------
-    # Step 8: Retrieve CBG centroids and compute distance to candidate
+    # Step 8: CBG centroids and distance to candidate
     # ------------------------------------------------------------------
-    cbg_ids = list(cbg_agg["cbg_id"])
+    cbg_ids = cbg_agg["cbg_id"].astype(str).tolist()
     cbg_ph = ",".join("?" for _ in cbg_ids)
-    cbg_centroids = pd.read_sql_query(
-        f"SELECT cbg_id, centroid_lat, centroid_lon FROM cbgs WHERE cbg_id IN ({cbg_ph})",
+    cbg_centroids = pd.read_sql(
+        f"""SELECT cbg_id, centroid_lat, centroid_lon
+            FROM cbgs
+            WHERE cbg_id IN ({cbg_ph})""",
         conn,
         params=cbg_ids,
     )
     cbg_agg = cbg_agg.merge(cbg_centroids, on="cbg_id")
 
-    # Vectorized haversine distance in meters
+    if cbg_agg.empty:
+        return 0.0, 0.0, []
+
     cbg_agg["distance"] = _haversine_vectorized(
         candidate_lat, candidate_lon,
         cbg_agg["centroid_lat"], cbg_agg["centroid_lon"],
     )
 
     # ------------------------------------------------------------------
-    # Step 9: Compute candidate store utility and predicted visits
+    # Step 9: Candidate utility and predicted visits
     # ------------------------------------------------------------------
     Aj_alpha = floor_area ** alpha
     cbg_agg["uij"] = Aj_alpha / (cbg_agg["distance"].clip(lower=100) ** beta)
@@ -237,7 +210,6 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
 
     total_predicted_visits = float(cbg_agg["predicted_visits"].sum())
 
-    # Market share proxy
     total_market_visits = float(cbg_agg["sum_visits"].sum())
     market_share_proxy = (
         total_predicted_visits / total_market_visits
@@ -246,7 +218,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     )
 
     # ------------------------------------------------------------------
-    # Step 10: Build competitor list for the dashboard
+    # Step 10: Competitor list for the dashboard
     # ------------------------------------------------------------------
     competitors = []
     for _, comp in naics_pois.head(20).iterrows():
@@ -264,7 +236,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
 
 
 # -------------------------------------------------------------------
-# App-facing wrapper (REQUIRED SIGNATURE — do not change)
+# App-facing wrapper — REQUIRED SIGNATURE, do not change
 # -------------------------------------------------------------------
 
 def run_huff_model(
@@ -272,7 +244,7 @@ def run_huff_model(
     candidate_lon,
     business_category,
     floor_area,
-    db_connection=None,
+    db_connection: Optional[pyodbc.Connection] = None,
 ):
     """
     Required app-facing function called by app.py.
@@ -280,26 +252,17 @@ def run_huff_model(
     Parameters
     ----------
     candidate_lat : float
-        Candidate store latitude (WGS84).
     candidate_lon : float
-        Candidate store longitude (WGS84).
     business_category : str or int
-        NAICS code (e.g. 4441).
+        NAICS code (e.g. 4441 or "4441").
     floor_area : float
-        Candidate store floor area in square meters.
-    db_connection : optional
-        If provided, used as the database connection. Otherwise a new
-        SQLite connection is opened to Data/your_team.db.
-
-    Returns
-    -------
-    dict
-        Structured result for the dashboard and chatbot.
+        Floor area in square meters.
+    db_connection : pyodbc.Connection, optional
+        Reuse an existing connection. If None, a new Azure SQL connection
+        is opened from db.get_connection() and closed before returning.
     """
-
     start_time = time.perf_counter()
 
-    # Validate inputs
     try:
         naics = int(str(business_category).strip())
     except Exception as exc:
@@ -311,11 +274,10 @@ def run_huff_model(
     candidate_lon = float(candidate_lon)
     floor_area = float(floor_area)
 
-    # Use provided connection or open a new one
     own_conn = False
     conn = db_connection
     if conn is None:
-        conn = _get_connection()
+        conn = get_connection()
         own_conn = True
 
     try:
@@ -328,7 +290,10 @@ def run_huff_model(
         )
     finally:
         if own_conn:
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     runtime_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
@@ -338,9 +303,9 @@ def run_huff_model(
         "competitors": competitors,
         "runtime_ms": runtime_ms,
         "notes": (
-            "V3 Huff model (Team 3) — SQLite-backed with indexed queries, "
-            "precomputed CBG centroids, haversine distance, and SQL-level "
-            "NAICS filtering. Data source: Data/your_team.db"
+            "V4 Huff model (Team 3) — Azure SQL backed, indexed queries, "
+            "precomputed CBG centroids, haversine distance, NAICS-level "
+            "filtering server-side. Data source: alsds_team3_db (Azure SQL)."
         ),
         "inputs": {
             "candidate_lat": candidate_lat,
@@ -352,7 +317,7 @@ def run_huff_model(
 
 
 def _safe_float(value):
-    """Convert a value to float, returning None on failure."""
+    """Convert to float, returning None on failure."""
     try:
         if value is None or value == "":
             return None
@@ -362,8 +327,9 @@ def _safe_float(value):
 
 
 # -------------------------------------------------------------------
-# Local quick test
+# Local quick test (only runs if SQL_CONNECTION_STRING is set)
 # -------------------------------------------------------------------
+
 if __name__ == "__main__":
     result = run_huff_model(
         candidate_lat=42.24,

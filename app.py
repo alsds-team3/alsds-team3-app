@@ -44,6 +44,79 @@ def dbcheck():
 
 
 # -------------------------
+# Module 7 — Migration & verification endpoints
+# -------------------------
+
+@app.route("/admin/migrate")
+def admin_migrate():
+    """
+    Spawns the SQLite -> Azure SQL migration on a background thread so the
+    request returns immediately (well under Gunicorn's 30s worker timeout
+    and the Azure edge proxy timeout). Re-entry is rejected while a previous
+    run is still active. Poll /admin/migrate/status for progress.
+    """
+    import threading
+    from migrate_to_azure_sql import execute_migration_task, migration_status
+
+    if migration_status["status"] == "running":
+        return jsonify({
+            "message": "A migration is already running.",
+            "progress_url": "/admin/migrate/status",
+            "current_status": migration_status,
+        }), 202
+
+    thread = threading.Thread(target=execute_migration_task, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "ok": True,
+        "message": "Migration started. Poll /admin/migrate/status for progress.",
+        "progress_url": "/admin/migrate/status",
+    }), 202
+
+
+@app.route("/admin/migrate/status")
+def admin_migrate_status():
+    """Read-only view of the live migration_status dict updated by the worker."""
+    from migrate_to_azure_sql import migration_status
+    return jsonify(migration_status)
+
+
+@app.route("/db_structure")
+def db_structure():
+    """
+    Lists base tables in Azure SQL with their row counts. Used to verify the
+    migration parity against the local SQLite database after /admin/migrate
+    completes.
+    """
+    from db import get_connection
+
+    query = """
+        SELECT
+            t.name AS table_name,
+            SUM(p.rows) AS row_count
+        FROM sys.tables t
+        INNER JOIN sys.partitions p
+            ON p.object_id = t.object_id
+        WHERE t.is_ms_shipped = 0
+          AND p.index_id IN (0, 1)
+        GROUP BY t.name
+        ORDER BY t.name;
+    """
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(query)
+            rows = cur.fetchall()
+        return jsonify([
+            {"TABLE_NAME": str(r[0]), "row_count": int(r[1] or 0)}
+            for r in rows
+        ])
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+# -------------------------
 # Run Huff Model
 # -------------------------
 
