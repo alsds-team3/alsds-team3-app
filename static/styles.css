@@ -28,7 +28,7 @@ header p {
 .layout {
   display: grid;
   grid-template-columns: 420px 1fr;
-  grid-template-rows: minmax(520px, 62vh) auto;
+  grid-template-rows: minmax(520px, 62vh) auto auto;
   gap: 16px;
   padding: 16px;
 }
@@ -41,7 +41,7 @@ header p {
 }
 
 .chat-panel {
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   display: flex;
   flex-direction: column;
   min-height: 680px;
@@ -52,6 +52,10 @@ header p {
 }
 
 .result-panel {
+  grid-column: 2;
+}
+
+.comparison-panel {
   grid-column: 2;
 }
 
@@ -94,6 +98,7 @@ h3 {
   margin-bottom: 10px;
   line-height: 1.4;
   font-size: 14px;
+  white-space: pre-wrap;
 }
 
 .message.bot {
@@ -137,18 +142,112 @@ button:hover {
   background: #1d4ed8;
 }
 
+button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+button.secondary-btn {
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #d1d5db;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+button.secondary-btn:hover {
+  background: #e5e7eb;
+}
+
+button.secondary-btn:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+}
+
 .hint {
   margin-top: 10px;
   color: #6b7280;
   font-size: 13px;
 }
 
-.result-summary {
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.result-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.result-cards.empty {
+  display: block;
+}
+
+.result-empty {
+  background: #f9fafb;
+  border: 1px dashed #d1d5db;
+  border-radius: 12px;
+  padding: 14px;
+  color: #6b7280;
+  font-size: 14px;
+  text-align: center;
+}
+
+.stat-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.stat-card .label {
+  font-size: 12px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.stat-card .value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.stat-card .sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.stat-card.accent-blue { border-top: 3px solid #2563eb; }
+.stat-card.accent-green { border-top: 3px solid #16a34a; }
+.stat-card.accent-amber { border-top: 3px solid #d97706; }
+.stat-card.accent-violet { border-top: 3px solid #7c3aed; }
+
+.chart-wrap {
+  position: relative;
   background: #f9fafb;
   border: 1px solid #e5e7eb;
-  padding: 14px;
   border-radius: 12px;
-  line-height: 1.5;
+  padding: 10px;
+  min-height: 180px;
+}
+
+.chart-empty {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+  padding: 30px 0;
+}
+
+.chart-wrap.has-data .chart-empty {
+  display: none;
 }
 
 .table-wrap {
@@ -172,6 +271,78 @@ th {
   background: #f3f4f6;
 }
 
+.comparison-content {
+  overflow-x: auto;
+}
+
+.comparison-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 1fr);
+  gap: 12px;
+}
+
+.scenario-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+  position: relative;
+}
+
+.scenario-card h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+
+.scenario-card .row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.scenario-card .row .k {
+  color: #6b7280;
+}
+
+.scenario-card .row .v {
+  font-weight: 600;
+  color: #111827;
+}
+
+.scenario-card .remove {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-size: 16px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.scenario-card .remove:hover {
+  color: #dc2626;
+  background: transparent;
+}
+
+.scenario-card.best {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.15);
+}
+
+.scenario-card .badge {
+  display: inline-block;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;
@@ -179,7 +350,8 @@ th {
   }
 
   .chat-panel,
-  .result-panel {
+  .result-panel,
+  .comparison-panel {
     grid-column: 1;
     grid-row: auto;
   }

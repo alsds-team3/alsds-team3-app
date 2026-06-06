@@ -162,6 +162,18 @@ def api_run_huff():
         if not business_category:
             return jsonify({"ok": False, "error": "Business category / NAICS code cannot be empty."}), 400
 
+        # Map plain-language categories ("coffee shop") to NAICS codes server-side
+        # so non-JS callers (curl, tests) get the same behavior as the chatbot.
+        if not business_category.isdigit():
+            mapped = NAICS_CATEGORY_MAP.get(business_category.lower())
+            if mapped:
+                business_category = mapped
+            else:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Unknown business category '{business_category}'. Provide a NAICS code or a known label."
+                }), 400
+
         if candidate_lat < -90 or candidate_lat > 90:
             return jsonify({"ok": False, "error": "candidate_lat must be between -90 and 90."}), 400
 
@@ -207,11 +219,14 @@ def api_ask():
         data = request.get_json(silent=True) or {}
         question = data.get("question")
         result = data.get("result")
+        inputs = data.get("inputs") or {}
+        history = data.get("history") or []
+        scenarios = data.get("scenarios") or []
 
         if not question or not result:
             return jsonify({"ok": False, "error": "Missing question or result"}), 400
 
-        answer = answer_question(question, result)
+        answer = answer_question(question, result, inputs, history, scenarios)
 
         return jsonify({"ok": True, "answer": answer})
 
@@ -287,40 +302,93 @@ Explain clearly:
     return response.choices[0].message.content
 
 
-def answer_question(question, result):
-    prompt = f"""
-You are assisting with a retail location analysis using a Huff model.
+def answer_question(question, result, inputs=None, history=None, scenarios=None):
+    inputs = inputs or {}
+    history = history or []
+    scenarios = scenarios or []
 
-Model result:
-{result}
+    scenarios_block = ""
+    if scenarios:
+        lines = []
+        for i, s in enumerate(scenarios, start=1):
+            si = s.get("inputs", {}) or {}
+            lines.append(
+                f"  Scenario {i}: NAICS={si.get('business_category')}, "
+                f"lat={si.get('candidate_lat')}, lon={si.get('candidate_lon')}, "
+                f"area={si.get('floor_area')} m², "
+                f"visits={s.get('predicted_visits')}, share={s.get('market_share')}"
+            )
+        scenarios_block = "Previously saved scenarios for comparison:\n" + "\n".join(lines) + "\n\n"
 
-User question:
-{question}
+    system_prompt = (
+        "You are a helpful data science assistant for a location analytics web app. "
+        "You remember the user's previous questions and saved scenarios within this conversation "
+        "and can reference them when answering follow-up questions.\n\n"
+        "Rules:\n"
+        "- Do not invent data; only use what is shown in the model result, inputs, and saved scenarios.\n"
+        "- Do not claim that you reran the Huff model. The app reruns the model only when the user's "
+        "  message contains a complete input set (NAICS code, latitude, longitude, floor area).\n"
+        "- If the user asks to rerun with new inputs but the message is missing some, tell them which "
+        "  inputs are still required.\n"
+        "- When comparing saved scenarios, be explicit about which scenario is being referenced."
+    )
 
-Answer clearly and concisely, grounded in the model output.
+    context_prompt = (
+        f"Current model inputs:\n{inputs}\n\n"
+        f"Current model result:\n{result}\n\n"
+        f"{scenarios_block}"
+        f"User question:\n{question}"
+    )
 
-Important rules:
-- Do not invent data.
-- Do not claim that you reran the Huff model.
-- If the user asks to rerun the model with new inputs, explain that the app can rerun the model when the message includes all required inputs: NAICS code, floor area, latitude, and longitude.
-"""
+    messages = [{"role": "system", "content": system_prompt}]
+    for turn in history[-10:]:
+        role = turn.get("role")
+        content = turn.get("content")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": context_prompt})
 
     response = client.chat.completions.create(
         model=DEPLOYMENT,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful data science assistant for a location analytics web app."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
+        messages=messages,
         temperature=0.5
     )
 
     return response.choices[0].message.content
+
+
+# -------------------------
+# Business-category → NAICS map (server-side mirror of static/naics_map.js)
+# -------------------------
+
+NAICS_CATEGORY_MAP = {
+    "supermarket": "4451", "grocery": "4451", "grocery store": "4451",
+    "convenience store": "4452", "convenience": "4452",
+    "gas station": "4471",
+    "pharmacy": "4461", "drug store": "4461",
+    "clothing": "4481", "clothing store": "4481", "apparel": "4481",
+    "shoe store": "4482", "jewelry": "4483",
+    "sporting goods": "4511",
+    "book store": "4512", "bookstore": "4512",
+    "department store": "4522",
+    "electronics": "4431", "electronics store": "4431",
+    "furniture": "4421", "furniture store": "4421",
+    "home improvement": "4441", "hardware": "4441", "hardware store": "4441",
+    "building materials": "4441",
+    "florist": "4531", "office supplies": "4532", "pet store": "4539",
+    "restaurant": "7225", "full service restaurant": "7225",
+    "fast food": "7225", "coffee shop": "7225", "coffee": "7225",
+    "cafe": "7225", "café": "7225",
+    "bar": "7224", "pub": "7224",
+    "bakery": "3118",
+    "hotel": "7211", "motel": "7211",
+    "gym": "7139", "fitness center": "7139",
+    "salon": "8121", "hair salon": "8121", "barber": "8121", "barber shop": "8121",
+    "dry cleaner": "8123", "laundry": "8123",
+    "auto repair": "8111", "car wash": "8111",
+    "bank": "5221",
+    "movie theater": "5121", "cinema": "5121",
+}
 
 
 # -------------------------

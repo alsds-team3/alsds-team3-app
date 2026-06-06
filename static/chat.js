@@ -1,22 +1,32 @@
 const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
+const saveScenarioBtn = document.getElementById("saveScenarioBtn");
+const clearScenariosBtn = document.getElementById("clearScenariosBtn");
 
 const state = {
   step: "category",
   business_category: null,
+  business_category_label: null,
   candidate_lat: null,
   candidate_lon: null,
   floor_area: null,
-  last_result: null
+  last_result: null,
+  last_inputs: null,
+  history: [],
+  scenarios: []
 };
+
+let competitorChart = null;
 
 addBotMessage(
   "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
-  "First, enter the business NAICS code. For example: 4441."
+  "Enter a business category like 'coffee shop' or a NAICS code like 4441."
 );
 
 sendBtn.addEventListener("click", handleSend);
+saveScenarioBtn.addEventListener("click", saveCurrentScenario);
+clearScenariosBtn.addEventListener("click", clearScenarios);
 
 chatInput.addEventListener("keydown", function (event) {
   if (event.key === "Enter") {
@@ -45,14 +55,6 @@ async function handleSend() {
   chatInput.value = "";
 
   try {
-    /*
-      IMPORTANT:
-      Before treating the message as a normal follow-up question,
-      check whether the user is asking to rerun the model with a new full set of inputs.
-
-      Example supported message:
-      "use 42.229212, -71.805525 and rerun the model for NAICS code 4441 and area of 1000 square meters"
-    */
     const rerunInputs = extractRerunInputs(text);
 
     if (rerunInputs) {
@@ -61,19 +63,26 @@ async function handleSend() {
     }
 
     if (state.step === "category") {
-      const naicsCode = text.trim();
+      const resolved = window.resolveBusinessCategory(text);
 
-      if (!/^\d+$/.test(naicsCode)) {
-        addBotMessage("Please enter a numeric NAICS code. For example: 4441.");
+      if (!resolved) {
+        addBotMessage(
+          "I didn't recognize that category. Try a NAICS code (e.g. 4441) " +
+          "or a common label like 'coffee shop', 'grocery', 'pharmacy', 'restaurant', 'gym'."
+        );
         return;
       }
 
-      state.business_category = naicsCode;
+      state.business_category = resolved;
+      state.business_category_label = text;
       state.step = "location";
 
+      const wasMapped = !/^\d{2,6}$/.test(text.trim());
       addBotMessage(
-        "Good. Now click the proposed store location on the map. " +
-        "You can also type coordinates as: 42.24, -71.78"
+        (wasMapped
+          ? `I mapped "${text}" to NAICS ${resolved}. `
+          : `Using NAICS ${resolved}. `) +
+        "Now click the proposed store location on the map, or type coordinates as: 42.24, -71.78"
       );
       return;
     }
@@ -136,7 +145,7 @@ async function rerunModelFromMessage(inputs) {
   state.step = "ready";
 
   addBotMessage(
-    `I found a new complete model input set. I will rerun the Huff model for NAICS ${state.business_category}, ` +
+    `I found a new complete input set. Rerunning the Huff model for NAICS ${state.business_category}, ` +
     `location (${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}), ` +
     `and floor area ${state.floor_area} square meters.`
   );
@@ -153,16 +162,12 @@ async function runModel() {
 
   const response = await fetch("/api/run_huff", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       candidate_lat: state.candidate_lat,
       candidate_lon: state.candidate_lon,
       business_category: state.business_category,
       floor_area: state.floor_area,
-
-      // Optional aliases for clearer backend compatibility
       naics_code: state.business_category,
       floor_area_sqm: state.floor_area
     })
@@ -175,16 +180,26 @@ async function runModel() {
   }
 
   state.last_result = data.result;
+  state.last_inputs = {
+    business_category: state.business_category,
+    business_category_label: state.business_category_label,
+    candidate_lat: state.candidate_lat,
+    candidate_lon: state.candidate_lon,
+    floor_area: state.floor_area
+  };
 
   renderResult(data.result);
+  renderCompetitorChart(data.result.competitors);
 
   if (window.plotCompetitors) {
     window.plotCompetitors(data.result.competitors);
   }
 
+  saveScenarioBtn.disabled = false;
+
   addBotMessage(
     data.explanation ||
-    "Model completed. You can now ask follow-up questions about the result, or provide a new NAICS code, area, and coordinates to rerun the model."
+    "Model completed. You can now ask follow-up questions, save this scenario to compare against others, or provide new inputs to rerun."
   );
 }
 
@@ -196,12 +211,17 @@ async function askQuestion(question) {
 
   const response = await fetch("/api/ask", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       question,
-      result: state.last_result
+      result: state.last_result,
+      inputs: state.last_inputs,
+      history: state.history.slice(-10),
+      scenarios: state.scenarios.map(s => ({
+        inputs: s.inputs,
+        predicted_visits: s.result.predicted_visits,
+        market_share: s.result.market_share
+      }))
     })
   });
 
@@ -211,65 +231,50 @@ async function askQuestion(question) {
     throw new Error(data.error || "The assistant could not answer.");
   }
 
+  state.history.push({ role: "user", content: question });
+  state.history.push({ role: "assistant", content: data.answer });
+
   addBotMessage(data.answer);
 }
 
-function extractRerunInputs(message) {
-  const coords = parseCoordinates(message);
-
-  if (!coords) {
-    return null;
-  }
-
-  const naicsMatch =
-    message.match(/naics(?:\s+code)?\s*(?:is|=|:|of|for)?\s*(\d{2,6})/i) ||
-    message.match(/business\s+category\s*(?:is|=|:|of|for)?\s*(\d{2,6})/i) ||
-    message.match(/category\s*(?:is|=|:|of|for)?\s*(\d{2,6})/i);
-
-  const areaMatch =
-    message.match(/area\s*(?:of|is|=|:)?\s*([\d,]+(?:\.\d+)?)/i) ||
-    message.match(/floor\s+area\s*(?:of|is|=|:)?\s*([\d,]+(?:\.\d+)?)/i) ||
-    message.match(/([\d,]+(?:\.\d+)?)\s*(?:square\s+meters|square\s+metres|sqm|sq\.?\s*m|m2|m²)/i);
-
-  if (!naicsMatch || !areaMatch) {
-    return null;
-  }
-
-  const businessCategory = naicsMatch[1];
-  const floorArea = Number(areaMatch[1].replace(/,/g, ""));
-
-  if (!businessCategory || !Number.isFinite(floorArea) || floorArea <= 0) {
-    return null;
-  }
-
-  return {
-    business_category: businessCategory,
-    candidate_lat: coords.lat,
-    candidate_lon: coords.lon,
-    floor_area: floorArea
-  };
-}
-
 function renderResult(result) {
-  const summary = document.getElementById("resultSummary");
-  const tableWrap = document.getElementById("competitorTable");
+  const cards = document.getElementById("resultCards");
 
-  const predictedVisits = result.predicted_visits ?? "N/A";
+  const predictedVisits = result.predicted_visits;
   const marketShare = Number(result.market_share);
-  const runtime = result.runtime_ms ?? "N/A";
+  const runtime = result.runtime_ms;
+  const competitorCount = Array.isArray(result.competitors) ? result.competitors.length : 0;
   const notes = result.notes ?? "";
 
-  summary.innerHTML = `
-    <strong>Predicted Visits:</strong> ${escapeHtml(predictedVisits)}<br>
-    <strong>Estimated Market Share:</strong> ${Number.isFinite(marketShare) ? (marketShare * 100).toFixed(2) + "%" : "N/A"}<br>
-    <strong>Runtime:</strong> ${escapeHtml(runtime)} ms<br>
-    <strong>Notes:</strong> ${escapeHtml(notes)}
+  cards.classList.remove("empty");
+  cards.innerHTML = `
+    <div class="stat-card accent-blue">
+      <div class="label">Predicted Visits</div>
+      <div class="value">${formatNumber(predictedVisits)}</div>
+      <div class="sub">monthly estimate</div>
+    </div>
+    <div class="stat-card accent-green">
+      <div class="label">Market Share</div>
+      <div class="value">${Number.isFinite(marketShare) ? (marketShare * 100).toFixed(2) + "%" : "N/A"}</div>
+      <div class="sub">of category demand</div>
+    </div>
+    <div class="stat-card accent-amber">
+      <div class="label">Competitors</div>
+      <div class="value">${competitorCount}</div>
+      <div class="sub">nearby in category</div>
+    </div>
+    <div class="stat-card accent-violet">
+      <div class="label">Runtime</div>
+      <div class="value">${formatNumber(runtime)}<span style="font-size:14px;font-weight:500;"> ms</span></div>
+      <div class="sub">${escapeHtml(notes) || "model execution"}</div>
+    </div>
   `;
 
+  const tableWrap = document.getElementById("competitorTable");
   const competitors = Array.isArray(result.competitors) ? result.competitors : [];
 
   if (competitors.length === 0) {
-    tableWrap.innerHTML = "No competitor records returned.";
+    tableWrap.innerHTML = "<div class='result-empty'>No competitor records returned.</div>";
     return;
   }
 
@@ -297,43 +302,190 @@ function renderResult(result) {
   `;
 }
 
-function parseCoordinates(text) {
-  /*
-    Supports:
-    42.229212, -71.805525
-    use 42.229212, -71.805525 and rerun...
-  */
-  const match = text.match(/(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+function renderCompetitorChart(competitors) {
+  const wrap = document.querySelector(".chart-wrap");
+  const canvas = document.getElementById("competitorChart");
 
-  if (!match) {
-    return null;
+  if (!Array.isArray(competitors) || competitors.length === 0 || typeof Chart === "undefined") {
+    wrap.classList.remove("has-data");
+    if (competitorChart) {
+      competitorChart.destroy();
+      competitorChart = null;
+    }
+    return;
   }
+
+  const top = [...competitors]
+    .map(c => ({
+      name: String(c.name ?? c.place_name ?? c.poi_name ?? "Unknown"),
+      attraction: Number(c.attraction ?? 0)
+    }))
+    .filter(c => Number.isFinite(c.attraction))
+    .sort((a, b) => b.attraction - a.attraction)
+    .slice(0, 10);
+
+  if (top.length === 0) {
+    wrap.classList.remove("has-data");
+    if (competitorChart) { competitorChart.destroy(); competitorChart = null; }
+    return;
+  }
+
+  wrap.classList.add("has-data");
+
+  const cfg = {
+    type: "bar",
+    data: {
+      labels: top.map(t => t.name.length > 22 ? t.name.slice(0, 20) + "…" : t.name),
+      datasets: [{
+        label: "Attraction",
+        data: top.map(t => t.attraction),
+        backgroundColor: "#2563eb"
+      }]
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true } }
+    }
+  };
+
+  if (competitorChart) {
+    competitorChart.data = cfg.data;
+    competitorChart.update();
+  } else {
+    competitorChart = new Chart(canvas.getContext("2d"), cfg);
+  }
+}
+
+function saveCurrentScenario() {
+  if (!state.last_result || !state.last_inputs) return;
+
+  state.scenarios.push({
+    id: Date.now(),
+    inputs: { ...state.last_inputs },
+    result: state.last_result
+  });
+
+  renderScenarios();
+  addBotMessage(`Saved scenario #${state.scenarios.length}. Run another to compare side-by-side.`);
+}
+
+function clearScenarios() {
+  state.scenarios = [];
+  renderScenarios();
+}
+
+function renderScenarios() {
+  const wrap = document.getElementById("comparisonContent");
+  clearScenariosBtn.disabled = state.scenarios.length === 0;
+
+  if (state.scenarios.length === 0) {
+    wrap.innerHTML = `<div class="result-empty">
+      Saved scenarios appear here side-by-side. Run the model and click "Save scenario" to compare alternatives.
+    </div>`;
+    return;
+  }
+
+  let bestIdx = 0;
+  let bestVisits = -Infinity;
+  state.scenarios.forEach((s, i) => {
+    const v = Number(s.result.predicted_visits);
+    if (Number.isFinite(v) && v > bestVisits) {
+      bestVisits = v;
+      bestIdx = i;
+    }
+  });
+
+  const cards = state.scenarios.map((s, i) => {
+    const v = Number(s.result.predicted_visits);
+    const ms = Number(s.result.market_share);
+    const isBest = i === bestIdx && state.scenarios.length > 1;
+    return `
+      <div class="scenario-card ${isBest ? "best" : ""}">
+        <button class="remove" data-id="${s.id}" title="Remove">&times;</button>
+        ${isBest ? '<span class="badge">Best predicted visits</span>' : ""}
+        <h4>Scenario #${i + 1}</h4>
+        <div class="row"><span class="k">NAICS</span><span class="v">${escapeHtml(s.inputs.business_category)}</span></div>
+        <div class="row"><span class="k">Lat, Lon</span><span class="v">${s.inputs.candidate_lat.toFixed(4)}, ${s.inputs.candidate_lon.toFixed(4)}</span></div>
+        <div class="row"><span class="k">Floor area</span><span class="v">${formatNumber(s.inputs.floor_area)} m²</span></div>
+        <div class="row"><span class="k">Visits</span><span class="v">${formatNumber(v)}</span></div>
+        <div class="row"><span class="k">Market share</span><span class="v">${Number.isFinite(ms) ? (ms * 100).toFixed(2) + "%" : "N/A"}</span></div>
+        <div class="row"><span class="k">Competitors</span><span class="v">${Array.isArray(s.result.competitors) ? s.result.competitors.length : 0}</span></div>
+      </div>
+    `;
+  }).join("");
+
+  wrap.innerHTML = `<div class="comparison-grid">${cards}</div>`;
+
+  wrap.querySelectorAll(".remove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = Number(btn.getAttribute("data-id"));
+      state.scenarios = state.scenarios.filter(s => s.id !== id);
+      renderScenarios();
+    });
+  });
+}
+
+function extractRerunInputs(message) {
+  const coords = parseCoordinates(message);
+  if (!coords) return null;
+
+  let businessCategory = null;
+  const naicsMatch =
+    message.match(/naics(?:\s+code)?\s*(?:is|=|:|of|for)?\s*(\d{2,6})/i) ||
+    message.match(/business\s+category\s*(?:is|=|:|of|for)?\s*(\d{2,6})/i) ||
+    message.match(/category\s*(?:is|=|:|of|for)?\s*(\d{2,6})/i);
+
+  if (naicsMatch) {
+    businessCategory = naicsMatch[1];
+  } else if (window.resolveBusinessCategory) {
+    // try keyword resolution from the message
+    businessCategory = window.resolveBusinessCategory(message);
+  }
+
+  const areaMatch =
+    message.match(/area\s*(?:of|is|=|:)?\s*([\d,]+(?:\.\d+)?)/i) ||
+    message.match(/floor\s+area\s*(?:of|is|=|:)?\s*([\d,]+(?:\.\d+)?)/i) ||
+    message.match(/([\d,]+(?:\.\d+)?)\s*(?:square\s+meters|square\s+metres|sqm|sq\.?\s*m|m2|m²)/i);
+
+  if (!businessCategory || !areaMatch) return null;
+
+  const floorArea = Number(areaMatch[1].replace(/,/g, ""));
+  if (!Number.isFinite(floorArea) || floorArea <= 0) return null;
+
+  return {
+    business_category: businessCategory,
+    candidate_lat: coords.lat,
+    candidate_lon: coords.lon,
+    floor_area: floorArea
+  };
+}
+
+function parseCoordinates(text) {
+  const match = text.match(/(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!match) return null;
 
   const lat = Number(match[1]);
   const lon = Number(match[2]);
 
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    return null;
-  }
-
-  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-    return null;
-  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
 
   return { lat, lon };
 }
 
-function addBotMessage(text) {
-  addMessage(text, "bot");
+function formatNumber(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return escapeHtml(value ?? "N/A");
+  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function addUserMessage(text) {
-  addMessage(text, "user");
-}
-
-function addErrorMessage(text) {
-  addMessage(text, "error");
-}
+function addBotMessage(text) { addMessage(text, "bot"); }
+function addUserMessage(text) { addMessage(text, "user"); }
+function addErrorMessage(text) { addMessage(text, "error"); }
 
 function addMessage(text, type) {
   const div = document.createElement("div");

@@ -22,12 +22,13 @@
       <div id="chatMessages" class="chat-messages"></div>
 
       <div class="input-row">
-        <input id="chatInput" type="text" placeholder="Type your answer or question..." />
+        <input id="chatInput" type="text" placeholder="Type a category (e.g. coffee shop) or question..." />
         <button id="sendBtn">Send</button>
       </div>
 
       <div class="hint">
-        Tip: click the map to choose the proposed store location.
+        Tip: click the map to choose the proposed store location. You can type a business
+        category like "coffee shop" or a NAICS code like 4441.
       </div>
     </section>
 
@@ -40,18 +41,45 @@
     </section>
 
     <section class="panel result-panel">
-      <h2>Model Result</h2>
+      <div class="result-header">
+        <h2>Model Result</h2>
+        <div class="result-actions">
+          <button id="saveScenarioBtn" type="button" class="secondary-btn" disabled>
+            Save scenario for comparison
+          </button>
+        </div>
+      </div>
 
-      <div id="resultSummary" class="result-summary">
-        No model result yet.
+      <div id="resultCards" class="result-cards empty">
+        <div class="result-empty">Run the model to see predicted visits, market share, and competitor attraction.</div>
+      </div>
+
+      <h3>Competitor Attraction</h3>
+      <div class="chart-wrap">
+        <canvas id="competitorChart" height="160"></canvas>
+        <div id="chartEmpty" class="chart-empty">No competitor data yet.</div>
       </div>
 
       <h3>Nearby Competitors / Attraction Scores</h3>
       <div id="competitorTable" class="table-wrap"></div>
     </section>
+
+    <section class="panel comparison-panel">
+      <div class="result-header">
+        <h2>Scenario Comparison</h2>
+        <button id="clearScenariosBtn" type="button" class="secondary-btn" disabled>Clear all</button>
+      </div>
+      <div id="comparisonContent" class="comparison-content">
+        <div class="result-empty">
+          Saved scenarios appear here side-by-side. Run the model and click "Save scenario" to compare alternatives.
+        </div>
+      </div>
+    </section>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="/static/naics_map.js"></script>
   <script src="/static/map.js"></script>
   <script src="/static/chat.js"></script>
 </body>
