@@ -21,6 +21,28 @@ DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
 
 # -------------------------
+# Geographic bounds — Worcester, MA
+# -------------------------
+# Padded bounding box covering the City of Worcester plus the immediate
+# surrounding towns served by the calibrated CBG dataset. The Huff model is
+# only meaningful inside this footprint, so candidate locations outside it
+# are rejected by /api/run_huff with a clear error.
+WORCESTER_BOUNDS = {
+    "lat_min": 42.18,
+    "lat_max": 42.36,
+    "lon_min": -71.92,
+    "lon_max": -71.68,
+}
+
+
+def is_in_worcester(lat, lon):
+    return (
+        WORCESTER_BOUNDS["lat_min"] <= lat <= WORCESTER_BOUNDS["lat_max"]
+        and WORCESTER_BOUNDS["lon_min"] <= lon <= WORCESTER_BOUNDS["lon_max"]
+    )
+
+
+# -------------------------
 # Routes
 # -------------------------
 
@@ -32,6 +54,12 @@ def index():
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/bounds")
+def api_bounds():
+    """Worcester service-area bounding box; consumed by the frontend."""
+    return jsonify(WORCESTER_BOUNDS)
 
 
 @app.route("/dbcheck")
@@ -179,6 +207,17 @@ def api_run_huff():
 
         if candidate_lon < -180 or candidate_lon > 180:
             return jsonify({"ok": False, "error": "candidate_lon must be between -180 and 180."}), 400
+
+        if not is_in_worcester(candidate_lat, candidate_lon):
+            return jsonify({
+                "ok": False,
+                "error": (
+                    "Candidate location is outside the Worcester, MA service area. "
+                    f"Latitude must be in [{WORCESTER_BOUNDS['lat_min']}, {WORCESTER_BOUNDS['lat_max']}] "
+                    f"and longitude in [{WORCESTER_BOUNDS['lon_min']}, {WORCESTER_BOUNDS['lon_max']}]."
+                ),
+                "bounds": WORCESTER_BOUNDS,
+            }), 400
 
         if floor_area <= 0:
             return jsonify({"ok": False, "error": "floor_area must be greater than zero."}), 400

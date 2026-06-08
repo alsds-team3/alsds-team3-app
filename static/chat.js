@@ -58,6 +58,14 @@ async function handleSend() {
     const rerunInputs = extractRerunInputs(text);
 
     if (rerunInputs) {
+      if (window.isInWorcester &&
+          !window.isInWorcester(rerunInputs.candidate_lat, rerunInputs.candidate_lon)) {
+        addBotMessage(
+          "I can only rerun the model for locations inside the Worcester service area. " +
+          "Pick a point inside the green dashed box and try again."
+        );
+        return;
+      }
       await rerunModelFromMessage(rerunInputs);
       return;
     }
@@ -92,6 +100,16 @@ async function handleSend() {
 
       if (!coords) {
         addBotMessage("Please click the map or type coordinates in this format: 42.24, -71.78");
+        return;
+      }
+
+      if (window.isInWorcester && !window.isInWorcester(coords.lat, coords.lon)) {
+        const b = window.getWorcesterBounds ? window.getWorcesterBounds() : null;
+        addBotMessage(
+          `That point is outside the Worcester service area${b
+            ? ` (lat ${b.lat_min}–${b.lat_max}, lon ${b.lon_min}–${b.lon_max})`
+            : ""}. Please pick a location inside the green dashed box on the map.`
+        );
         return;
       }
 
