@@ -28,6 +28,25 @@ sendBtn.addEventListener("click", handleSend);
 saveScenarioBtn.addEventListener("click", saveCurrentScenario);
 clearScenariosBtn.addEventListener("click", clearScenarios);
 
+const resetBtn = document.getElementById("resetBtn");
+if (resetBtn) {
+  resetBtn.addEventListener("click", () => {
+    state.step = "category";
+    state.business_category = null;
+    state.business_category_label = null;
+    state.candidate_lat = null;
+    state.candidate_lon = null;
+    state.floor_area = null;
+    state.last_result = null;
+    state.last_inputs = null;
+    state.history = [];
+    saveScenarioBtn.disabled = true;
+    addBotMessage(
+      "Started over. Enter a business category (e.g. 'coffee shop') or a NAICS code to begin again."
+    );
+  });
+}
+
 chatInput.addEventListener("keydown", function (event) {
   if (event.key === "Enter") {
     handleSend();
@@ -44,6 +63,18 @@ window.onMapLocationSelected = function (location) {
       "Now enter the proposed store floor area in square meters."
     );
     state.step = "floor_area";
+    return;
+  }
+
+  // After a successful run, a fresh map click should be a real input change,
+  // not silently ignored. Re-run with the same NAICS + area so the user can
+  // explore alternative sites without re-typing everything.
+  if (state.step === "ready" && state.business_category && state.floor_area) {
+    addBotMessage(
+      `New candidate location captured: ${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}. ` +
+      `Rerunning the model with NAICS ${state.business_category} and floor area ${state.floor_area} m².`
+    );
+    runModel().catch(err => addErrorMessage(err.message || String(err)));
   }
 };
 
@@ -147,6 +178,14 @@ async function handleSend() {
     }
 
     if (state.step === "ready") {
+      // Allow partial updates after the first run so users aren't forced to
+      // retype every input. Anything we can confidently parse as a NAICS,
+      // a coordinate pair, or a floor area updates that field and reruns.
+      const update = parsePartialUpdate(text);
+      if (update) {
+        await applyPartialUpdate(update);
+        return;
+      }
       await askQuestion(text);
       return;
     }
@@ -216,8 +255,10 @@ async function runModel() {
   saveScenarioBtn.disabled = false;
 
   addBotMessage(
-    data.explanation ||
-    "Model completed. You can now ask follow-up questions, save this scenario to compare against others, or provide new inputs to rerun."
+    (data.explanation ? data.explanation + "\n\n" : "") +
+    "You can now: (a) ask follow-up questions, (b) click a new spot on the map to rerun there, " +
+    "(c) type 'use NAICS 5121', 'change category to gym', or '1500 sqm' to update just one input, " +
+    "or (d) click \"Start over\" to reset."
   );
 }
 
@@ -444,6 +485,98 @@ function renderScenarios() {
       renderScenarios();
     });
   });
+}
+
+// -------------------------------------------------------------------
+// Partial-update parser
+//
+// After a successful run, users want to tweak ONE input at a time
+// ("change naics to 5121", "use 1500 sqm", "42.27, -71.81") without
+// re-typing everything. We detect single-field updates and rerun
+// the model keeping the other current state values.
+// -------------------------------------------------------------------
+function parsePartialUpdate(message) {
+  const update = {};
+
+  // 1. Coordinates anywhere in the message.
+  const coords = parseCoordinates(message);
+  if (coords) {
+    update.candidate_lat = coords.lat;
+    update.candidate_lon = coords.lon;
+  }
+
+  // 2. Floor area — only match when the unit/keyword is explicit, so a
+  // bare number (which might be a NAICS) doesn't get misread as an area.
+  const areaMatch =
+    message.match(/(?:floor\s+)?area\s*(?:of|is|=|:|to)?\s*([\d,]+(?:\.\d+)?)/i) ||
+    message.match(/([\d,]+(?:\.\d+)?)\s*(?:square\s+meters|square\s+metres|sqm|sq\.?\s*m|m2|m²)/i);
+  if (areaMatch) {
+    const area = Number(areaMatch[1].replace(/,/g, ""));
+    if (Number.isFinite(area) && area > 0) update.floor_area = area;
+  }
+
+  // 3. NAICS — explicit keyword, OR a known plain-language category,
+  // OR a bare 2-6 digit number (only if no area was already matched
+  // from the same number).
+  const naicsExplicit =
+    message.match(/naics(?:\s+code)?\s*(?:is|=|:|of|for|to)?\s*(\d{2,6})/i) ||
+    message.match(/(?:business\s+)?category\s*(?:is|=|:|of|for|to)?\s*(\d{2,6})/i);
+  if (naicsExplicit) {
+    update.business_category = naicsExplicit[1];
+  } else if (window.resolveBusinessCategory) {
+    const resolved = window.resolveBusinessCategory(message);
+    if (resolved) update.business_category = resolved;
+  }
+  if (!update.business_category) {
+    // Bare digit string like "5121" with nothing else.
+    const bare = message.trim().match(/^(\d{2,6})$/);
+    if (bare && update.floor_area === undefined) {
+      update.business_category = bare[1];
+    }
+  }
+
+  return Object.keys(update).length > 0 ? update : null;
+}
+
+async function applyPartialUpdate(update) {
+  const changes = [];
+
+  if (update.business_category && update.business_category !== state.business_category) {
+    state.business_category = update.business_category;
+    changes.push(`NAICS → ${update.business_category}`);
+  }
+
+  if (update.candidate_lat !== undefined && update.candidate_lon !== undefined) {
+    if (window.isInWorcester && !window.isInWorcester(update.candidate_lat, update.candidate_lon)) {
+      addBotMessage(
+        "That location is outside the Worcester service area. " +
+        "Pick a point inside the green dashed box on the map."
+      );
+      return;
+    }
+    if (update.candidate_lat !== state.candidate_lat ||
+        update.candidate_lon !== state.candidate_lon) {
+      state.candidate_lat = update.candidate_lat;
+      state.candidate_lon = update.candidate_lon;
+      if (window.setCandidateLocation) {
+        window.setCandidateLocation(state.candidate_lat, state.candidate_lon, false);
+      }
+      changes.push(`location → ${update.candidate_lat.toFixed(4)}, ${update.candidate_lon.toFixed(4)}`);
+    }
+  }
+
+  if (update.floor_area && update.floor_area !== state.floor_area) {
+    state.floor_area = update.floor_area;
+    changes.push(`floor area → ${update.floor_area} m²`);
+  }
+
+  if (changes.length === 0) {
+    addBotMessage("Nothing changed — those values match the current inputs.");
+    return;
+  }
+
+  addBotMessage(`Updated ${changes.join(", ")}. Rerunning the model now.`);
+  await runModel();
 }
 
 function extractRerunInputs(message) {

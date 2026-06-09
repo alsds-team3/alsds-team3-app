@@ -116,6 +116,11 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
         raise ValueError(f"No competing POIs found for NAICS code {naics}.")
 
     relevant_placekeys = naics_pois["placekey"].dropna().astype(str).unique().tolist()
+    if not relevant_placekeys:
+        raise ValueError(
+            f"NAICS {naics} has POIs but none have a usable placekey to join "
+            "against the distance/visits tables."
+        )
     placeholders = ",".join("?" for _ in relevant_placekeys)
 
     # ------------------------------------------------------------------
@@ -219,17 +224,52 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
 
     # ------------------------------------------------------------------
     # Step 10: Competitor list for the dashboard
+    #
+    # For each competing POI we surface:
+    #   - distance_miles : great-circle distance from the candidate site
+    #                      (was None — caused "N/A" in the UI table)
+    #   - attraction     : total Huff utility across all CBGs (sum of uik
+    #                      contributions), giving a single comparable score
+    # Then we keep the 20 nearest competitors instead of the first 20 in
+    # DB order, since proximity is what matters for competitive context.
     # ------------------------------------------------------------------
+    METERS_PER_MILE = 1609.344
+    attraction_by_placekey = (
+        dist_df.groupby("placekey")["uik"].sum().to_dict()
+    )
+
+    pois = naics_pois.copy()
+    pois["latitude_f"] = pois["latitude"].apply(_safe_float)
+    pois["longitude_f"] = pois["longitude"].apply(_safe_float)
+
+    has_coords = pois["latitude_f"].notna() & pois["longitude_f"].notna()
+    pois.loc[has_coords, "distance_m_from_site"] = _haversine_vectorized(
+        candidate_lat,
+        candidate_lon,
+        pois.loc[has_coords, "latitude_f"],
+        pois.loc[has_coords, "longitude_f"],
+    )
+
+    pois = pois.sort_values("distance_m_from_site", na_position="last")
+
     competitors = []
-    for _, comp in naics_pois.head(20).iterrows():
+    for _, comp in pois.head(20).iterrows():
+        dist_m = comp.get("distance_m_from_site")
+        attraction = attraction_by_placekey.get(str(comp.get("placekey") or ""))
         competitors.append({
             "name": str(comp.get("location_name", "Unknown") or "Unknown"),
             "placekey": str(comp.get("placekey", "")),
             "lat": _safe_float(comp.get("latitude")),
             "lon": _safe_float(comp.get("longitude")),
             "size": _safe_float(comp.get("wkt_area_sq_meters")),
-            "distance_miles": None,
-            "attraction": None,
+            "distance_miles": (
+                round(float(dist_m) / METERS_PER_MILE, 3)
+                if dist_m is not None and pd.notna(dist_m) else None
+            ),
+            "attraction": (
+                round(float(attraction), 6)
+                if attraction is not None and pd.notna(attraction) else None
+            ),
         })
 
     return total_predicted_visits, market_share_proxy, competitors
@@ -331,6 +371,18 @@ def _safe_float(value):
 # -------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import os
+    import sys
+
+    if not os.getenv("SQL_CONNECTION_STRING"):
+        sys.stderr.write(
+            "SQL_CONNECTION_STRING is not set, so the Huff engine cannot reach "
+            "Azure SQL. Set it (e.g. `$env:SQL_CONNECTION_STRING = '...'` in "
+            "PowerShell, or `export SQL_CONNECTION_STRING=...` in bash) before "
+            "running this script directly.\n"
+        )
+        sys.exit(1)
+
     result = run_huff_model(
         candidate_lat=42.24,
         candidate_lon=-71.78,
