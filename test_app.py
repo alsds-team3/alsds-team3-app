@@ -157,12 +157,21 @@ class TestHelpers(unittest.TestCase):
 
 class TestNaicsMap(unittest.TestCase):
     def test_known_labels_have_naics(self):
-        for label in ["coffee shop", "grocery", "pharmacy", "gym", "restaurant"]:
+        for label in ["bakery", "liquor store", "gas station",
+                      "dentist", "hardware", "insurance"]:
             self.assertIn(label, app_module.NAICS_CATEGORY_MAP, label)
             self.assertTrue(
                 app_module.NAICS_CATEGORY_MAP[label].isdigit(),
                 f"NAICS for {label!r} must be digits",
             )
+
+    def test_every_alias_resolves_to_a_calibrated_naics(self):
+        """No alias may point to a NAICS code that lacks calibrated params —
+        that's exactly the bug from the screenshots."""
+        calibrated = {c["naics"] for c in app_module.CATEGORIES}
+        bad = {label: code for label, code in app_module.NAICS_CATEGORY_MAP.items()
+               if code not in calibrated}
+        self.assertEqual(bad, {}, f"Aliases pointing to uncalibrated codes: {bad}")
 
     def test_values_are_two_to_six_digit_strings(self):
         for label, code in app_module.NAICS_CATEGORY_MAP.items():
@@ -306,7 +315,27 @@ class TestRunHuffValidation(BaseAppTest):
             "floor_area": 1000,
         })
         self.assertEqual(r.status_code, 400)
-        self.assertIn("Unknown business category", r.get_json()["error"])
+        body = r.get_json()
+        self.assertIn("Unknown business category", body["error"])
+        self.assertIn("available", body)
+        self.assertTrue(any(c["naics"] == "4441" for c in body["available"]))
+
+    def test_uncalibrated_naics_rejected_with_list(self):
+        """The original screenshot bug: NAICS 7225 (coffee shop) is not in
+        the calibrated set. Must return 400 with the available list, not a
+        500 from the engine."""
+        r = self.post({
+            "candidate_lat": 42.26,
+            "candidate_lon": -71.80,
+            "business_category": "7225",
+            "floor_area": 1000,
+        })
+        self.assertEqual(r.status_code, 400)
+        body = r.get_json()
+        self.assertIn("not in the calibrated dataset", body["error"])
+        codes = {c["naics"] for c in body["available"]}
+        self.assertIn("4441", codes)
+        self.assertNotIn("7225", codes)
 
     def test_aliases_accepted(self):
         """Backend should accept either naics_code/floor_area_sqm or
@@ -365,28 +394,30 @@ class TestRunHuffSuccess(BaseAppTest):
                 "/api/run_huff",
                 json={
                     "candidate_lat": 42.26, "candidate_lon": -71.80,
-                    "business_category": "Coffee Shop",
+                    "business_category": "Liquor Store",
                     "floor_area": 1000,
                 },
             )
             self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
             _, kwargs = engine.call_args
-            self.assertEqual(kwargs["business_category"], "7225")
+            self.assertEqual(kwargs["business_category"], "445310")
 
     def test_engine_error_returns_500(self):
+        """If the engine fails for a *calibrated* code (e.g. DB hiccup), the
+        route should surface that as a 500, not silently swallow it."""
         with patch(
             "huff_engine.run_huff_model",
-            side_effect=ValueError("No calibrated alpha/beta for NAICS 9999."),
+            side_effect=ValueError("Transient DB error reading distances."),
         ):
             r = self.client.post(
                 "/api/run_huff",
                 json={
                     "candidate_lat": 42.26, "candidate_lon": -71.80,
-                    "business_category": "9999", "floor_area": 1000,
+                    "business_category": "4441", "floor_area": 1000,
                 },
             )
             self.assertEqual(r.status_code, 500)
-            self.assertIn("No calibrated", r.get_json()["error"])
+            self.assertIn("Transient DB error", r.get_json()["error"])
 
     def test_worcester_bounds_inclusive(self):
         """Every corner and the center of the Worcester bounding box must be
@@ -432,6 +463,36 @@ class TestRunHuffSuccess(BaseAppTest):
             )
             self.assertEqual(r.status_code, 400, f"should reject lat={lat},lon={lon}")
             self.assertIn("Worcester", r.get_json()["error"])
+
+    def test_categories_endpoint(self):
+        r = self.client.get("/api/categories")
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertIn("categories", body)
+        self.assertIn("aliases", body)
+        # all 23 calibrated codes present
+        self.assertEqual(len(body["categories"]), 23)
+        codes = {c["naics"] for c in body["categories"]}
+        for must_exist in ("4441", "311811", "447110", "445310", "522110"):
+            self.assertIn(must_exist, codes)
+        # every alias points to a code that exists in the calibrated list
+        for label, code in body["aliases"].items():
+            self.assertIn(code, codes, f"alias {label} -> {code} is uncalibrated")
+
+    def test_categories_match_calibrated_csv(self):
+        """The CATEGORIES constant must match the calibrated_parameters CSV
+        on disk, otherwise the dropdown and the engine will disagree."""
+        import csv
+        here = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.join(here, "Data", "calibrated_parameters_filtered.csv")
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            csv_codes = {row["NAICS code"].strip() for row in csv.DictReader(f)}
+        cat_codes = {c["naics"] for c in app_module.CATEGORIES}
+        self.assertEqual(
+            csv_codes, cat_codes,
+            f"CSV vs CATEGORIES drift — CSV-only: {csv_codes - cat_codes}, "
+            f"CATEGORIES-only: {cat_codes - csv_codes}",
+        )
 
     def test_bounds_endpoint(self):
         r = self.client.get("/api/bounds")

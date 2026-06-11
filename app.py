@@ -62,6 +62,19 @@ def api_bounds():
     return jsonify(WORCESTER_BOUNDS)
 
 
+@app.route("/api/categories")
+def api_categories():
+    """
+    Return the authoritative list of NAICS codes that have calibrated
+    alpha/beta parameters. The frontend uses this to render a dropdown so
+    users can't pick uncalibrated categories.
+    """
+    return jsonify({
+        "categories": CATEGORIES,
+        "aliases": NAICS_CATEGORY_MAP,
+    })
+
+
 @app.route("/dbcheck")
 def dbcheck():
     try:
@@ -190,8 +203,9 @@ def api_run_huff():
         if not business_category:
             return jsonify({"ok": False, "error": "Business category / NAICS code cannot be empty."}), 400
 
-        # Map plain-language categories ("coffee shop") to NAICS codes server-side
-        # so non-JS callers (curl, tests) get the same behavior as the chatbot.
+        # Map plain-language categories ("liquor store") to NAICS codes
+        # server-side so non-JS callers (curl, tests) get the same behavior
+        # as the chatbot.
         if not business_category.isdigit():
             mapped = NAICS_CATEGORY_MAP.get(business_category.lower())
             if mapped:
@@ -199,8 +213,27 @@ def api_run_huff():
             else:
                 return jsonify({
                     "ok": False,
-                    "error": f"Unknown business category '{business_category}'. Provide a NAICS code or a known label."
+                    "error": (
+                        f"Unknown business category '{business_category}'. "
+                        "Provide a NAICS code or pick from the calibrated list "
+                        "(see /api/categories)."
+                    ),
+                    "available": CATEGORIES,
                 }), 400
+
+        # Reject codes that aren't calibrated. Without this, the user gets a
+        # generic 500 from the engine; with it, they get the list of codes
+        # that actually work.
+        calibrated_codes = {c["naics"] for c in CATEGORIES}
+        if business_category not in calibrated_codes:
+            return jsonify({
+                "ok": False,
+                "error": (
+                    f"NAICS {business_category} is not in the calibrated dataset. "
+                    "Pick one of the calibrated categories below."
+                ),
+                "available": CATEGORIES,
+            }), 400
 
         if candidate_lat < -90 or candidate_lat > 90:
             return jsonify({"ok": False, "error": "candidate_lat must be between -90 and 90."}), 400
@@ -397,36 +430,108 @@ def answer_question(question, result, inputs=None, history=None, scenarios=None)
 
 
 # -------------------------
-# Business-category → NAICS map (server-side mirror of static/naics_map.js)
+# Business-category → NAICS map
+#
+# IMPORTANT: every entry below maps to one of the 23 NAICS codes that have
+# calibrated alpha/beta parameters in Azure SQL (parameters table, sourced
+# from calibrated_parameters_filtered.csv). Adding labels that point to
+# UNcalibrated codes produces "No calibrated alpha/beta parameters found
+# for NAICS code XXXX" at runtime — see CATEGORIES below for the authoritative
+# list shown to users.
 # -------------------------
 
+# Authoritative list of calibrated categories (NAICS code -> display label).
+# Returned by /api/categories and used to populate the dropdown in the UI.
+CATEGORIES = [
+    {"naics": "4441",   "label": "Building Material & Supplies Dealers"},
+    {"naics": "311811", "label": "Bakeries"},
+    {"naics": "3399",   "label": "Other Miscellaneous Manufacturing"},
+    {"naics": "447110", "label": "Gasoline Stations"},
+    {"naics": "621210", "label": "Offices of Dentists"},
+    {"naics": "522310", "label": "Mortgage & Credit Intermediation"},
+    {"naics": "922110", "label": "Justice, Public Order, and Safety"},
+    {"naics": "453991", "label": "Other Miscellaneous Retailers"},
+    {"naics": "441310", "label": "Auto Parts, Accessories & Tire Stores"},
+    {"naics": "445310", "label": "Beer, Wine & Liquor Stores"},
+    {"naics": "452319", "label": "General Merchandise / Warehouse Clubs"},
+    {"naics": "531120", "label": "Lessors of Real Estate"},
+    {"naics": "522110", "label": "Banks / Depository Credit Intermediation"},
+    {"naics": "611310", "label": "Colleges & Universities"},
+    {"naics": "531210", "label": "Real Estate Agents & Brokers"},
+    {"naics": "523930", "label": "Financial Investment Activities"},
+    {"naics": "517312", "label": "Telecommunications Carriers"},
+    {"naics": "621511", "label": "Medical & Diagnostic Laboratories"},
+    {"naics": "6214",   "label": "Outpatient Care Centers"},
+    {"naics": "812910", "label": "Pet Care & Other Personal Services"},
+    {"naics": "448310", "label": "Jewelry, Luggage & Leather Goods"},
+    {"naics": "512240", "label": "Sound Recording Studios"},
+    {"naics": "524113", "label": "Insurance Carriers"},
+]
+
+# Plain-language aliases users might type — all of these resolve to a
+# calibrated NAICS code. Keep this in sync with static/naics_map.js.
 NAICS_CATEGORY_MAP = {
-    "supermarket": "4451", "grocery": "4451", "grocery store": "4451",
-    "convenience store": "4452", "convenience": "4452",
-    "gas station": "4471",
-    "pharmacy": "4461", "drug store": "4461",
-    "clothing": "4481", "clothing store": "4481", "apparel": "4481",
-    "shoe store": "4482", "jewelry": "4483",
-    "sporting goods": "4511",
-    "book store": "4512", "bookstore": "4512",
-    "department store": "4522",
-    "electronics": "4431", "electronics store": "4431",
-    "furniture": "4421", "furniture store": "4421",
-    "home improvement": "4441", "hardware": "4441", "hardware store": "4441",
-    "building materials": "4441",
-    "florist": "4531", "office supplies": "4532", "pet store": "4539",
-    "restaurant": "7225", "full service restaurant": "7225",
-    "fast food": "7225", "coffee shop": "7225", "coffee": "7225",
-    "cafe": "7225", "café": "7225",
-    "bar": "7224", "pub": "7224",
-    "bakery": "3118",
-    "hotel": "7211", "motel": "7211",
-    "gym": "7139", "fitness center": "7139",
-    "salon": "8121", "hair salon": "8121", "barber": "8121", "barber shop": "8121",
-    "dry cleaner": "8123", "laundry": "8123",
-    "auto repair": "8111", "car wash": "8111",
-    "bank": "5221",
-    "movie theater": "5121", "cinema": "5121",
+    # 4441 Building Material & Supplies
+    "hardware": "4441", "hardware store": "4441",
+    "home improvement": "4441", "building materials": "4441",
+    "lumber": "4441", "lumber yard": "4441",
+    # 311811 Bakeries
+    "bakery": "311811", "bakeries": "311811", "bread shop": "311811",
+    # 3399 Other Miscellaneous Manufacturing
+    "miscellaneous manufacturing": "3399", "manufacturing": "3399",
+    # 447110 Gasoline Stations
+    "gas station": "447110", "gas": "447110", "fuel station": "447110",
+    "petrol station": "447110",
+    # 621210 Offices of Dentists
+    "dentist": "621210", "dental office": "621210", "dental clinic": "621210",
+    # 522310 Mortgage / Credit Intermediation
+    "mortgage": "522310", "mortgage broker": "522310",
+    "credit intermediation": "522310", "loan office": "522310",
+    # 922110 Justice / Public Order
+    "courthouse": "922110", "court": "922110", "public safety": "922110",
+    # 453991 Other Miscellaneous Retailers
+    "miscellaneous retail": "453991", "gift shop": "453991", "tobacco shop": "453991",
+    # 441310 Auto parts
+    "auto parts": "441310", "tire store": "441310", "tires": "441310",
+    "car parts": "441310", "automotive parts": "441310",
+    # 445310 Beer, Wine & Liquor
+    "liquor store": "445310", "liquor": "445310", "wine store": "445310",
+    "wine shop": "445310", "beer store": "445310",
+    # 452319 General Merchandise / Warehouse Club
+    "warehouse club": "452319", "supercenter": "452319",
+    "general merchandise": "452319", "department store": "452319",
+    # 531120 Lessors of Real Estate
+    "lessor": "531120", "property leasing": "531120", "rental property": "531120",
+    # 522110 Banks
+    "bank": "522110", "credit union": "522110", "depository": "522110",
+    # 611310 Colleges & Universities
+    "college": "611310", "university": "611310", "campus": "611310",
+    # 531210 Real Estate Agents
+    "real estate agent": "531210", "real estate broker": "531210",
+    "realtor": "531210", "real estate office": "531210",
+    # 523930 Financial Investment
+    "investment firm": "523930", "wealth management": "523930",
+    "financial advisor": "523930", "investment advisor": "523930",
+    # 517312 Telecoms
+    "telecom": "517312", "wireless carrier": "517312", "phone carrier": "517312",
+    "cellular store": "517312",
+    # 621511 Medical Labs
+    "medical lab": "621511", "diagnostic lab": "621511", "lab": "621511",
+    "blood lab": "621511",
+    # 6214 Outpatient Care
+    "outpatient": "6214", "outpatient clinic": "6214", "urgent care": "6214",
+    "clinic": "6214",
+    # 812910 Pet care / personal services
+    "pet care": "812910", "pet grooming": "812910", "pet services": "812910",
+    "personal services": "812910",
+    # 448310 Jewelry / luggage / leather
+    "jewelry": "448310", "jewelry store": "448310",
+    "luggage": "448310", "leather goods": "448310",
+    # 512240 Sound Recording
+    "recording studio": "512240", "sound studio": "512240", "music studio": "512240",
+    # 524113 Insurance Carriers
+    "insurance": "524113", "insurance agency": "524113",
+    "insurance carrier": "524113",
 }
 
 

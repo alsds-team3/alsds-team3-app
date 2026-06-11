@@ -21,14 +21,22 @@
 
       <div id="chatMessages" class="chat-messages"></div>
 
+      <div class="category-row">
+        <label for="categorySelect" class="category-label">Calibrated categories:</label>
+        <select id="categorySelect" class="category-select">
+          <option value="">— loading categories —</option>
+        </select>
+      </div>
+
       <div class="input-row">
-        <input id="chatInput" type="text" placeholder="Type a category (e.g. coffee shop) or question..." />
+        <input id="chatInput" type="text" placeholder="Type a category (e.g. liquor store) or question..." />
         <button id="sendBtn">Send</button>
       </div>
 
       <div class="hint">
-        Tip: click the map to choose the proposed store location. You can type a business
-        category like "coffee shop" or a NAICS code like 4441.
+        Tip: pick a category from the dropdown, or type a label like "bakery" / "liquor store"
+        / "gas station". Only NAICS codes with calibrated parameters work — uncalibrated
+        ones (coffee shop, gym, etc.) are not in this dataset.
       </div>
     </section>
 

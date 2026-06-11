@@ -1,67 +1,118 @@
 // Business category -> NAICS code mapping
-// Lets users type plain-language categories like "coffee shop" instead of digits.
+//
+// Every code below MUST exist in the calibrated parameters table in Azure SQL
+// (mirror of CATEGORIES / NAICS_CATEGORY_MAP in app.py). Adding labels that
+// point to uncalibrated NAICS codes produces "No calibrated alpha/beta
+// parameters found" at runtime — users see that as a red error in chat.
+
+// Calibrated NAICS list — used for the dropdown / suggestion chips.
+// Populated from /api/categories on load (this is just a fallback).
+let CALIBRATED_CATEGORIES = [
+  { naics: "4441",   label: "Building Material & Supplies Dealers" },
+  { naics: "311811", label: "Bakeries" },
+  { naics: "3399",   label: "Other Miscellaneous Manufacturing" },
+  { naics: "447110", label: "Gasoline Stations" },
+  { naics: "621210", label: "Offices of Dentists" },
+  { naics: "522310", label: "Mortgage & Credit Intermediation" },
+  { naics: "922110", label: "Justice, Public Order, and Safety" },
+  { naics: "453991", label: "Other Miscellaneous Retailers" },
+  { naics: "441310", label: "Auto Parts, Accessories & Tire Stores" },
+  { naics: "445310", label: "Beer, Wine & Liquor Stores" },
+  { naics: "452319", label: "General Merchandise / Warehouse Clubs" },
+  { naics: "531120", label: "Lessors of Real Estate" },
+  { naics: "522110", label: "Banks / Depository Credit Intermediation" },
+  { naics: "611310", label: "Colleges & Universities" },
+  { naics: "531210", label: "Real Estate Agents & Brokers" },
+  { naics: "523930", label: "Financial Investment Activities" },
+  { naics: "517312", label: "Telecommunications Carriers" },
+  { naics: "621511", label: "Medical & Diagnostic Laboratories" },
+  { naics: "6214",   label: "Outpatient Care Centers" },
+  { naics: "812910", label: "Pet Care & Other Personal Services" },
+  { naics: "448310", label: "Jewelry, Luggage & Leather Goods" },
+  { naics: "512240", label: "Sound Recording Studios" },
+  { naics: "524113", label: "Insurance Carriers" },
+];
+
 const NAICS_MAP = {
-  "supermarket": "4451",
-  "grocery": "4451",
-  "grocery store": "4451",
-  "convenience store": "4452",
-  "convenience": "4452",
-  "gas station": "4471",
-  "pharmacy": "4461",
-  "drug store": "4461",
-  "clothing": "4481",
-  "clothing store": "4481",
-  "apparel": "4481",
-  "shoe store": "4482",
-  "jewelry": "4483",
-  "sporting goods": "4511",
-  "book store": "4512",
-  "bookstore": "4512",
-  "department store": "4522",
-  "electronics": "4431",
-  "electronics store": "4431",
-  "furniture": "4421",
-  "furniture store": "4421",
-  "home improvement": "4441",
-  "hardware": "4441",
-  "hardware store": "4441",
-  "building materials": "4441",
-  "florist": "4531",
-  "office supplies": "4532",
-  "pet store": "4539",
-  "restaurant": "7225",
-  "full service restaurant": "7225",
-  "fast food": "7225",
-  "coffee shop": "7225",
-  "coffee": "7225",
-  "cafe": "7225",
-  "café": "7225",
-  "bar": "7224",
-  "pub": "7224",
-  "bakery": "3118",
-  "hotel": "7211",
-  "motel": "7211",
-  "gym": "7139",
-  "fitness center": "7139",
-  "salon": "8121",
-  "hair salon": "8121",
-  "barber": "8121",
-  "barber shop": "8121",
-  "dry cleaner": "8123",
-  "laundry": "8123",
-  "auto repair": "8111",
-  "car wash": "8111",
-  "bank": "5221",
-  "movie theater": "5121",
-  "cinema": "5121"
+  "hardware": "4441", "hardware store": "4441",
+  "home improvement": "4441", "building materials": "4441",
+  "lumber": "4441", "lumber yard": "4441",
+
+  "bakery": "311811", "bakeries": "311811", "bread shop": "311811",
+
+  "miscellaneous manufacturing": "3399", "manufacturing": "3399",
+
+  "gas station": "447110", "gas": "447110", "fuel station": "447110",
+  "petrol station": "447110",
+
+  "dentist": "621210", "dental office": "621210", "dental clinic": "621210",
+
+  "mortgage": "522310", "mortgage broker": "522310",
+  "credit intermediation": "522310", "loan office": "522310",
+
+  "courthouse": "922110", "court": "922110", "public safety": "922110",
+
+  "miscellaneous retail": "453991", "gift shop": "453991", "tobacco shop": "453991",
+
+  "auto parts": "441310", "tire store": "441310", "tires": "441310",
+  "car parts": "441310", "automotive parts": "441310",
+
+  "liquor store": "445310", "liquor": "445310", "wine store": "445310",
+  "wine shop": "445310", "beer store": "445310",
+
+  "warehouse club": "452319", "supercenter": "452319",
+  "general merchandise": "452319", "department store": "452319",
+
+  "lessor": "531120", "property leasing": "531120", "rental property": "531120",
+
+  "bank": "522110", "credit union": "522110", "depository": "522110",
+
+  "college": "611310", "university": "611310", "campus": "611310",
+
+  "real estate agent": "531210", "real estate broker": "531210",
+  "realtor": "531210", "real estate office": "531210",
+
+  "investment firm": "523930", "wealth management": "523930",
+  "financial advisor": "523930", "investment advisor": "523930",
+
+  "telecom": "517312", "wireless carrier": "517312", "phone carrier": "517312",
+  "cellular store": "517312",
+
+  "medical lab": "621511", "diagnostic lab": "621511", "lab": "621511",
+  "blood lab": "621511",
+
+  "outpatient": "6214", "outpatient clinic": "6214", "urgent care": "6214",
+  "clinic": "6214",
+
+  "pet care": "812910", "pet grooming": "812910", "pet services": "812910",
+  "personal services": "812910",
+
+  "jewelry": "448310", "jewelry store": "448310",
+  "luggage": "448310", "leather goods": "448310",
+
+  "recording studio": "512240", "sound studio": "512240", "music studio": "512240",
+
+  "insurance": "524113", "insurance agency": "524113",
+  "insurance carrier": "524113",
 };
+
+function isCalibratedNaics(code) {
+  return CALIBRATED_CATEGORIES.some(c => c.naics === String(code));
+}
 
 function resolveBusinessCategory(input) {
   if (!input) return null;
   const text = String(input).trim().toLowerCase();
-  if (/^\d{2,6}$/.test(text)) return text;
+
+  // Bare NAICS code — only accept calibrated ones.
+  if (/^\d{2,6}$/.test(text)) {
+    return isCalibratedNaics(text) ? text : null;
+  }
+
+  // Exact label match in the alias table.
   if (NAICS_MAP[text]) return NAICS_MAP[text];
-  // try fuzzy: longest matching key contained in input
+
+  // Fuzzy: longest alias key contained in the input string.
   let best = null;
   for (const key of Object.keys(NAICS_MAP)) {
     if (text.includes(key)) {
@@ -71,5 +122,24 @@ function resolveBusinessCategory(input) {
   return best ? NAICS_MAP[best] : null;
 }
 
+// Refresh from the server so client and server can't drift.
+fetch("/api/categories")
+  .then(r => r.ok ? r.json() : null)
+  .then(data => {
+    if (!data) return;
+    if (Array.isArray(data.categories) && data.categories.length) {
+      CALIBRATED_CATEGORIES = data.categories;
+    }
+    if (data.aliases && typeof data.aliases === "object") {
+      Object.assign(NAICS_MAP, data.aliases);
+    }
+    if (typeof window.onCategoriesLoaded === "function") {
+      window.onCategoriesLoaded(CALIBRATED_CATEGORIES);
+    }
+  })
+  .catch(() => { /* keep local fallback */ });
+
 window.NAICS_MAP = NAICS_MAP;
 window.resolveBusinessCategory = resolveBusinessCategory;
+window.isCalibratedNaics = isCalibratedNaics;
+window.getCalibratedCategories = () => CALIBRATED_CATEGORIES;

@@ -21,8 +21,31 @@ let competitorChart = null;
 
 addBotMessage(
   "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
-  "Enter a business category like 'coffee shop' or a NAICS code like 4441."
+  "Pick a category from the dropdown below, type a label like 'liquor store' or " +
+  "'bakery', or enter a calibrated NAICS code (e.g. 4441)."
 );
+
+window.onCategoriesLoaded = function (cats) {
+  const sel = document.getElementById("categorySelect");
+  if (!sel || sel.dataset.populated === "1") return;
+  sel.dataset.populated = "1";
+  sel.innerHTML =
+    '<option value="">— pick a calibrated category —</option>' +
+    cats.map(c =>
+      `<option value="${c.naics}">${escapeHtml(c.label)} (${c.naics})</option>`
+    ).join("");
+};
+
+const categorySelect = document.getElementById("categorySelect");
+if (categorySelect) {
+  categorySelect.addEventListener("change", () => {
+    const code = categorySelect.value;
+    if (!code) return;
+    chatInput.value = code;
+    handleSend();
+    categorySelect.value = "";
+  });
+}
 
 sendBtn.addEventListener("click", handleSend);
 saveScenarioBtn.addEventListener("click", saveCurrentScenario);
@@ -105,9 +128,12 @@ async function handleSend() {
       const resolved = window.resolveBusinessCategory(text);
 
       if (!resolved) {
+        const cats = (window.getCalibratedCategories || (() => []))();
+        const sample = cats.slice(0, 8).map(c => `${c.label} (${c.naics})`).join(", ");
         addBotMessage(
-          "I didn't recognize that category. Try a NAICS code (e.g. 4441) " +
-          "or a common label like 'coffee shop', 'grocery', 'pharmacy', 'restaurant', 'gym'."
+          "I can only run the model for categories that have calibrated " +
+          "parameters in our dataset. Pick one from the dropdown, or try a label like: " +
+          sample + (cats.length > 8 ? ", …" : "") + "."
         );
         return;
       }
