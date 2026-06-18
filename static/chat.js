@@ -21,7 +21,7 @@ let competitorChart = null;
 let scenarioChart = null;
 let CATEGORIES_LIST = [];
 
-const inputCard = document.getElementById("inputCard");
+const quickChips = document.getElementById("quickChips");
 
 addBotMessage(
   "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
@@ -29,106 +29,144 @@ addBotMessage(
 );
 
 // -------------------------------------------------------------------------
-// Adaptive input card — renders contextual pickers in the chat based on
-// state.step so users can click instead of type for the structured inputs.
+// One smart input + a single state-aware chip row. Placeholder + chips
+// change with state.step so the user always sees the next-best action.
 // -------------------------------------------------------------------------
-function renderInputCard() {
-  if (!inputCard) return;
+const PLACEHOLDERS = {
+  category: "Type a category, NAICS code, or pick a chip…",
+  location: "Type 42.26, -71.80 — or click anywhere on the map",
+  floor_area: "Enter floor area in m² (e.g. 1000)",
+  ready: "Ask about site feasibility, compare scenarios…",
+};
+
+const POPULAR_CATS = ["4441", "311811", "445310", "447110"]; // hardware, bakery, liquor, gas
+const LOCATION_PRESETS = [
+  { label: "Downtown",  lat: 42.2626, lon: -71.8023 },
+  { label: "Tatnuck",   lat: 42.2735, lon: -71.8330 },
+  { label: "Lincoln St",lat: 42.2900, lon: -71.8050 },
+];
+const AREA_PRESETS = [500, 1000, 2500];
+
+function renderQuickChips() {
+  if (!quickChips) return;
+  chatInput.placeholder = PLACEHOLDERS[state.step] || PLACEHOLDERS.ready;
+  chatInput.type = state.step === "floor_area" ? "number" : "text";
 
   if (state.step === "category") {
-    const cats = CATEGORIES_LIST.length ? CATEGORIES_LIST :
-      (window.getCalibratedCategories ? window.getCalibratedCategories() : []);
-    const popular = cats.slice(0, 8);
-    const optionHtml = cats.map(c =>
-      `<option value="${c.naics}">${escapeHtml(c.label)} (${c.naics})</option>`
+    const cats = (CATEGORIES_LIST.length
+      ? CATEGORIES_LIST
+      : (window.getCalibratedCategories ? window.getCalibratedCategories() : []));
+    const popularChips = POPULAR_CATS
+      .map(code => cats.find(c => c.naics === code))
+      .filter(Boolean);
+    quickChips.innerHTML =
+      popularChips.map(c =>
+        `<button type="button" data-send="${c.naics}">${escapeHtml(c.label)}</button>`
+      ).join("") +
+      `<button type="button" class="more" id="chipBrowseAll">▾ Browse all (${cats.length})</button>`;
+
+    document.getElementById("chipBrowseAll").addEventListener("click", () => {
+      const sel = document.getElementById("categorySelect");
+      if (!sel) return;
+      const code = window.prompt(
+        "Pick a NAICS code:\n\n" +
+        cats.map((c, i) => `${i + 1}. ${c.label} (${c.naics})`).join("\n") +
+        "\n\nType the number or paste a NAICS code:"
+      );
+      if (!code) return;
+      const trimmed = code.trim();
+      const idx = Number(trimmed);
+      const picked = Number.isInteger(idx) && idx >= 1 && idx <= cats.length
+        ? cats[idx - 1].naics
+        : trimmed;
+      submitChip(picked);
+    });
+  } else if (state.step === "location") {
+    quickChips.innerHTML = LOCATION_PRESETS.map(p =>
+      `<button type="button" data-send="${p.lat}, ${p.lon}">${escapeHtml(p.label)}</button>`
     ).join("");
-
-    inputCard.innerHTML = `
-      <div class="card-head">Pick a business category</div>
-      <div class="pick-row">
-        <select class="pick-select" id="inlineCatSelect">
-          <option value="">— all calibrated categories —</option>
-          ${optionHtml}
-        </select>
-      </div>
-      <div class="picker-chips">
-        ${popular.map(c =>
-          `<button type="button" class="pick-chip" data-naics="${c.naics}">
-             ${escapeHtml(c.label)}<span class="code">${c.naics}</span>
-           </button>`
-        ).join("")}
-      </div>
+  } else if (state.step === "floor_area") {
+    quickChips.innerHTML = AREA_PRESETS.map(a =>
+      `<button type="button" data-send="${a}">${a.toLocaleString()} m²</button>`
+    ).join("");
+  } else {
+    // ready — follow-up actions only
+    quickChips.innerHTML = `
+      <button type="button" data-send="Compare the saved scenarios">Compare</button>
+      <button type="button" data-send="What are the main competitors?">Competitors</button>
+      <button type="button" data-send="What are the limitations of this result?">Limitations</button>
     `;
-    const sel = document.getElementById("inlineCatSelect");
-    sel.addEventListener("change", () => {
-      if (sel.value) submitInline(sel.value);
-    });
-    inputCard.querySelectorAll(".pick-chip").forEach(btn => {
-      btn.addEventListener("click", () => submitInline(btn.dataset.naics));
-    });
-    return;
   }
 
-  if (state.step === "location") {
-    inputCard.innerHTML = `
-      <div class="card-head">Pick a candidate location</div>
-      <div class="pick-row">
-        <input class="pick-input" id="inlineCoord" type="text"
-               placeholder="42.2671, -71.8003" autocomplete="off" />
-        <button type="button" class="pick-action" id="inlineCoordGo">Use</button>
-      </div>
-      <div class="picker-chips">
-        <span class="pick-chip" style="cursor:default;background:transparent;border:none;color:var(--on-surface-variant);">
-          or click anywhere on the map →
-        </span>
-      </div>
-    `;
-    const inp = document.getElementById("inlineCoord");
-    const go = document.getElementById("inlineCoordGo");
-    const fire = () => { if (inp.value.trim()) submitInline(inp.value.trim()); };
-    go.addEventListener("click", fire);
-    inp.addEventListener("keydown", e => { if (e.key === "Enter") fire(); });
-    return;
-  }
-
-  if (state.step === "floor_area") {
-    const presets = [250, 500, 1000, 2000, 5000];
-    inputCard.innerHTML = `
-      <div class="card-head">Pick a floor area (m²)</div>
-      <div class="pick-row">
-        <input class="pick-input" id="inlineArea" type="number" min="1" step="1"
-               placeholder="e.g. 1000" autocomplete="off" />
-        <button type="button" class="pick-action" id="inlineAreaGo">Run</button>
-      </div>
-      <div class="picker-chips">
-        ${presets.map(a =>
-          `<button type="button" class="pick-chip" data-area="${a}">
-             ${a.toLocaleString()} m²
-           </button>`
-        ).join("")}
-      </div>
-    `;
-    const inp = document.getElementById("inlineArea");
-    const go = document.getElementById("inlineAreaGo");
-    const fire = () => { if (inp.value.trim()) submitInline(inp.value.trim()); };
-    go.addEventListener("click", fire);
-    inp.addEventListener("keydown", e => { if (e.key === "Enter") fire(); });
-    inputCard.querySelectorAll(".pick-chip").forEach(btn => {
-      btn.addEventListener("click", () => submitInline(btn.dataset.area));
-    });
-    return;
-  }
-
-  // step === "ready" — no structured input needed, hide the card.
-  inputCard.innerHTML = "";
+  quickChips.querySelectorAll("button[data-send]").forEach(btn => {
+    btn.addEventListener("click", () => submitChip(btn.dataset.send));
+  });
 }
 
-function submitInline(text) {
+function submitChip(text) {
   chatInput.value = String(text);
   handleSend();
 }
 
-renderInputCard();
+// -------------------------------------------------------------------------
+// Smalltalk + safety helpers — kept tiny on purpose. We don't try to be a
+// general chatbot; we just keep the DSS focused.
+// -------------------------------------------------------------------------
+const GREETINGS = /^(hi|hii|hey|hello|howdy|yo|hola|namaste|good\s+(morning|afternoon|evening|day))[.! ]*$/i;
+const THANKS    = /^(thanks?|thank\s+you|thx|ty|cheers|appreciate(\s+it)?)[.! ]*$/i;
+const FAREWELL  = /^(bye|goodbye|see\s+ya|see\s+you|later|gn|gtg)[.! ]*$/i;
+const HELP_RX   = /^(help|what\s+can\s+you\s+do|how\s+does\s+this\s+work|what\s+is\s+this)\??$/i;
+
+function handleSmalltalk(text) {
+  if (GREETINGS.test(text)) {
+    return "Hi! I'm your Worcester store-location advisor. Pick a calibrated " +
+           "business category below to get started, or click anywhere on the map " +
+           "to drop a candidate pin.";
+  }
+  if (THANKS.test(text)) {
+    return "You're welcome. Want to compare another location, or try a different category?";
+  }
+  if (FAREWELL.test(text)) {
+    return "Take care. Click \"Start over\" any time to run a new scenario.";
+  }
+  if (HELP_RX.test(text)) {
+    return "I help evaluate retail/business sites in Worcester. Three quick steps: " +
+           "1) pick a category, 2) drop a pin on the map, 3) enter floor area in m². " +
+           "After the model runs, you can compare scenarios or ask follow-up questions.";
+  }
+  return null;
+}
+
+// Cheap prompt-injection / off-topic filter. Catches obvious jailbreak
+// patterns; real defense is the system prompt on the server.
+const UNSAFE_PATTERNS = [
+  /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts?|rules?)/i,
+  /system\s+prompt/i,
+  /disregard\s+(your|all)\s+(instructions|rules)/i,
+  /act\s+as\s+(?!a\s+(store|location|business|retail))/i,
+  /jailbreak|dan\s+mode|developer\s+mode/i,
+  /<\s*script|javascript:|onerror\s*=/i,
+];
+
+function looksUnsafe(text) {
+  if (text.length > 500) return true;
+  return UNSAFE_PATTERNS.some(rx => rx.test(text));
+}
+
+function friendlyError(raw) {
+  const s = String(raw || "");
+  if (/pyodbc|odbc|sql\s*server|connection\s+timeout|tcp\s+provider/i.test(s)) {
+    return "I couldn't reach the Azure SQL backend just now. Please try the run again in a moment.";
+  }
+  if (/api\s*key|openai|deployment/i.test(s)) {
+    return "The AI explanation service is unavailable right now, but the model itself can still run.";
+  }
+  if (s.length > 200) return "Something went wrong on the server. Please try again.";
+  return s || "Something went wrong. Please try again.";
+}
+
+const renderInputCard = renderQuickChips;  // back-compat shim
+renderQuickChips();
 
 window.onCategoriesLoaded = function (cats) {
   CATEGORIES_LIST = Array.isArray(cats) ? cats : [];
@@ -207,7 +245,7 @@ window.onMapLocationSelected = function (location) {
       `New candidate location captured: ${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}. ` +
       `Rerunning the model with NAICS ${state.business_category} and floor area ${state.floor_area} m².`
     );
-    runModel().catch(err => addErrorMessage(err.message || String(err)));
+    runModel().catch(err => addErrorMessage(friendlyError(err.message || String(err))));
   }
 };
 
@@ -217,6 +255,23 @@ async function handleSend() {
 
   addUserMessage(text);
   chatInput.value = "";
+
+  // Lightweight smalltalk + safety pre-filter handled entirely client-side.
+  // Catches greetings, thanks, and obvious off-topic / jailbreak attempts
+  // before they hit the model APIs.
+  const smalltalk = handleSmalltalk(text);
+  if (smalltalk) {
+    addBotMessage(smalltalk);
+    return;
+  }
+  if (looksUnsafe(text)) {
+    addBotMessage(
+      "I can only help with Worcester store-location decisions: running the Huff model, " +
+      "comparing sites, interpreting competitors. Try a category like \"bakery\" or " +
+      "drop a pin on the map."
+    );
+    return;
+  }
 
   try {
     const rerunInputs = extractRerunInputs(text);
@@ -333,7 +388,7 @@ async function handleSend() {
       return;
     }
   } catch (error) {
-    addErrorMessage(error.message || String(error));
+    addErrorMessage(friendlyError(error.message || String(error)));
   }
 }
 
@@ -379,7 +434,7 @@ async function runModel() {
   const data = await response.json();
 
   if (!response.ok || !data.ok) {
-    throw new Error(data.error || "Model failed.");
+    throw new Error(friendlyError(data.error || "Model failed."));
   }
 
   state.last_result = data.result;

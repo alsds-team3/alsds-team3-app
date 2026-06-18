@@ -1,4 +1,5 @@
 import os
+import re
 from flask import Flask, request, jsonify, render_template
 from openai import AzureOpenAI
 
@@ -417,7 +418,7 @@ def api_run_huff():
         })
 
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": _sanitize_exception(e)}), 500
 
 
 # -------------------------
@@ -428,7 +429,7 @@ def api_run_huff():
 def api_ask():
     try:
         data = request.get_json(silent=True) or {}
-        question = data.get("question")
+        question = (data.get("question") or "").strip()
         result = data.get("result")
         inputs = data.get("inputs") or {}
         history = data.get("history") or []
@@ -437,12 +438,55 @@ def api_ask():
         if not question or not result:
             return jsonify({"ok": False, "error": "Missing question or result"}), 400
 
-        answer = answer_question(question, result, inputs, history, scenarios)
+        # Length cap — client also caps at 500, this is the server-side floor.
+        if len(question) > 1000:
+            question = question[:1000]
 
+        # Cheap jailbreak / off-topic guard. Real defense is the system prompt,
+        # but we short-circuit obvious attempts before they reach the LLM.
+        if _looks_unsafe(question):
+            return jsonify({
+                "ok": True,
+                "answer": (
+                    "I can only help with Worcester store-location decisions — running "
+                    "the Huff model, comparing sites, interpreting competitors. "
+                    "What location would you like to analyze next?"
+                ),
+            })
+
+        answer = answer_question(question, result, inputs, history, scenarios)
         return jsonify({"ok": True, "answer": answer})
 
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": _sanitize_exception(e)}), 500
+
+
+# Patterns we treat as obvious off-topic or jailbreak attempts.
+_UNSAFE_PATTERNS = [
+    re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts?|rules?)", re.I),
+    re.compile(r"system\s+prompt", re.I),
+    re.compile(r"disregard\s+(your|all)\s+(instructions|rules)", re.I),
+    re.compile(r"jailbreak|dan\s+mode|developer\s+mode", re.I),
+    re.compile(r"<\s*script|javascript:|onerror\s*=", re.I),
+]
+
+
+def _looks_unsafe(text: str) -> bool:
+    return any(rx.search(text) for rx in _UNSAFE_PATTERNS)
+
+
+def _sanitize_exception(exc) -> str:
+    """Strip backend internals (pyodbc class names, SQL state codes) from the
+    user-facing error string. Keeps logs untouched."""
+    raw = str(exc)
+    low = raw.lower()
+    if "pyodbc" in low or "odbc" in low or "sql server" in low:
+        return "The database backend is temporarily unavailable. Please try again."
+    if "openai" in low or "api key" in low or "deployment" in low:
+        return "The AI explanation service is temporarily unavailable."
+    if len(raw) > 200 or "<class" in raw or "traceback" in low:
+        return "Something went wrong on the server. Please try again."
+    return raw
 
 
 # -------------------------
