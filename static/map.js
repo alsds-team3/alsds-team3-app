@@ -2,6 +2,8 @@ let candidateLocation = null;
 let candidateMarker = null;
 let competitorLayer = null;
 let boundsRect = null;
+let cbgLayer = null;
+let categoryPoiLayer = null;
 
 // Worcester service-area bounding box. Default mirrors the server; replaced
 // by /api/bounds on load so client and server stay in sync.
@@ -38,32 +40,47 @@ function drawBoundsRectangle() {
   ).addTo(map).bindTooltip("Worcester service area", { sticky: true });
 }
 
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   maxZoom: 19,
-  attribution: "&copy; OpenStreetMap contributors"
+  attribution: "&copy; OpenStreetMap &copy; CARTO",
+  subdomains: "abcd"
 }).addTo(map);
 
-fetch("/static/data/worcester_cbgs_map.geojson")
-  .then(response => {
-    if (!response.ok) {
-      throw new Error("GeoJSON not found");
-    }
-    return response.json();
-  })
+// CBG demand grid: prefer Azure SQL (Module 9), fall back to the static
+// GeoJSON polygons if the database isn't reachable.
+fetch("/api/cbgs")
+  .then(r => r.ok ? r.json() : null)
   .then(data => {
-    const geoLayer = L.geoJSON(data, {
-      style: {
+    if (!data || !data.ok || !Array.isArray(data.cbgs) || data.cbgs.length === 0) {
+      throw new Error("no SQL cbgs");
+    }
+    cbgLayer = L.layerGroup().addTo(map);
+    data.cbgs.forEach(c => {
+      L.circleMarker([c.lat, c.lon], {
+        radius: 3,
         weight: 1,
         color: "#2563eb",
-        opacity: 0.7,
-        fillOpacity: 0.08
-      }
-    }).addTo(map);
-
-    map.fitBounds(geoLayer.getBounds());
+        fillColor: "#2563eb",
+        fillOpacity: 0.4
+      })
+        .addTo(cbgLayer)
+        .bindTooltip(`CBG ${c.cbg_id}`, { sticky: true });
+    });
+    if (cbgLayer.getLayers().length > 0) {
+      map.fitBounds(L.featureGroup(cbgLayer.getLayers()).getBounds(), { padding: [20, 20] });
+    }
   })
-  .catch(error => {
-    console.warn("Worcester GeoJSON layer could not be loaded:", error);
+  .catch(() => {
+    fetch("/static/data/worcester_cbgs_map.geojson")
+      .then(response => response.ok ? response.json() : null)
+      .then(geo => {
+        if (!geo) return;
+        const geoLayer = L.geoJSON(geo, {
+          style: { weight: 1, color: "#2563eb", opacity: 0.7, fillOpacity: 0.08 }
+        }).addTo(map);
+        map.fitBounds(geoLayer.getBounds());
+      })
+      .catch(err => console.warn("CBG layer unavailable:", err));
   });
 
 map.on("click", function (event) {
@@ -149,9 +166,40 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function showCategoryPois(naics) {
+  if (categoryPoiLayer) {
+    categoryPoiLayer.remove();
+    categoryPoiLayer = null;
+  }
+  if (!naics) return;
+  fetch(`/api/pois?naics=${encodeURIComponent(naics)}`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (!data || !data.ok || !Array.isArray(data.pois)) return;
+      categoryPoiLayer = L.layerGroup().addTo(map);
+      data.pois.forEach(p => {
+        L.circleMarker([p.lat, p.lon], {
+          radius: 5,
+          weight: 1,
+          color: "#f59e0b",
+          fillColor: "#f59e0b",
+          fillOpacity: 0.55
+        })
+          .addTo(categoryPoiLayer)
+          .bindPopup(
+            `<strong>${escapeHtml(p.name)}</strong><br>` +
+            `NAICS: ${escapeHtml(p.naics_code)}<br>` +
+            (p.area_sqm ? `Area: ${Number(p.area_sqm).toLocaleString()} m²` : "")
+          );
+      });
+    })
+    .catch(err => console.warn("POI overlay unavailable:", err));
+}
+
 // Expose functions so chat.js can call them.
 window.setCandidateLocation = setCandidateLocation;
 window.getCandidateLocation = getCandidateLocation;
 window.plotCompetitors = plotCompetitors;
+window.showCategoryPois = showCategoryPois;
 window.isInWorcester = isInWorcester;
 window.getWorcesterBounds = () => WORCESTER_BOUNDS;

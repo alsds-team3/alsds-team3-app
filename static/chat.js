@@ -18,6 +18,7 @@ const state = {
 };
 
 let competitorChart = null;
+let scenarioChart = null;
 
 addBotMessage(
   "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
@@ -142,6 +143,10 @@ async function handleSend() {
       state.business_category_label = text;
       state.step = "location";
 
+      if (window.showCategoryPois) {
+        window.showCategoryPois(resolved);
+      }
+
       const wasMapped = !/^\d{2,6}$/.test(text.trim());
       addBotMessage(
         (wasMapped
@@ -226,6 +231,8 @@ async function rerunModelFromMessage(inputs) {
   state.candidate_lon = inputs.candidate_lon;
   state.floor_area = inputs.floor_area;
   state.step = "ready";
+
+  if (window.showCategoryPois) window.showCategoryPois(state.business_category);
 
   addBotMessage(
     `I found a new complete input set. Rerunning the Huff model for NAICS ${state.business_category}, ` +
@@ -333,16 +340,6 @@ function renderResult(result) {
 
   cards.classList.remove("empty");
   cards.innerHTML = `
-    <div class="stat-card accent-blue">
-      <div class="label">Predicted Visits</div>
-      <div class="value">${formatNumber(predictedVisits)}</div>
-      <div class="sub">monthly estimate</div>
-    </div>
-    <div class="stat-card accent-green">
-      <div class="label">Market Share</div>
-      <div class="value">${Number.isFinite(marketShare) ? (marketShare * 100).toFixed(2) + "%" : "N/A"}</div>
-      <div class="sub">of category demand</div>
-    </div>
     <div class="stat-card accent-amber">
       <div class="label">Competitors</div>
       <div class="value">${competitorCount}</div>
@@ -350,10 +347,38 @@ function renderResult(result) {
     </div>
     <div class="stat-card accent-violet">
       <div class="label">Runtime</div>
-      <div class="value">${formatNumber(runtime)}<span style="font-size:14px;font-weight:500;"> ms</span></div>
+      <div class="value">${formatNumber(runtime)}<span style="font-size:12px;font-weight:500;"> ms</span></div>
       <div class="sub">${escapeHtml(notes) || "model execution"}</div>
     </div>
   `;
+
+  // Mirror the headline numbers into the bottom-left glass cards.
+  const visitsEl = document.getElementById("visitsValue");
+  const shareEl = document.getElementById("shareValue");
+  if (visitsEl) visitsEl.textContent = formatNumber(predictedVisits);
+  if (shareEl) {
+    shareEl.textContent = Number.isFinite(marketShare)
+      ? (marketShare * 100).toFixed(1) + "%"
+      : "—";
+  }
+
+  // Visualize competitor attraction as a 6-bar sparkline in the visits card.
+  const bars = document.querySelectorAll("#visitsBars span");
+  if (bars.length) {
+    const comps = Array.isArray(result.competitors) ? result.competitors : [];
+    const attractions = comps
+      .map(c => Number(c.attraction ?? 0))
+      .filter(n => Number.isFinite(n));
+    const sample = attractions.slice(0, 6);
+    while (sample.length < 6) sample.push(0);
+    const max = Math.max(...sample, 1);
+    const peakIdx = sample.indexOf(Math.max(...sample));
+    bars.forEach((b, i) => {
+      const pct = Math.max(8, (sample[i] / max) * 100);
+      b.style.height = pct + "%";
+      b.classList.toggle("peak", i === peakIdx);
+    });
+  }
 
   const tableWrap = document.getElementById("competitorTable");
   const competitors = Array.isArray(result.competitors) ? result.competitors : [];
@@ -511,6 +536,77 @@ function renderScenarios() {
       renderScenarios();
     });
   });
+
+  renderScenarioChart();
+}
+
+function renderScenarioChart() {
+  const chartWrap = document.getElementById("scenarioChartWrap");
+  const canvas = document.getElementById("scenarioChart");
+  if (!chartWrap || !canvas || typeof Chart === "undefined") return;
+
+  if (state.scenarios.length < 2) {
+    chartWrap.style.display = "none";
+    if (scenarioChart) { scenarioChart.destroy(); scenarioChart = null; }
+    return;
+  }
+
+  chartWrap.style.display = "block";
+
+  const labels = state.scenarios.map((_, i) => `Scenario ${i + 1}`);
+  const visits = state.scenarios.map(s => Number(s.result.predicted_visits) || 0);
+  const share = state.scenarios.map(s => {
+    const ms = Number(s.result.market_share);
+    return Number.isFinite(ms) ? ms * 100 : 0;
+  });
+
+  const cfg = {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Predicted Visits",
+          data: visits,
+          backgroundColor: "#2563eb",
+          yAxisID: "yVisits"
+        },
+        {
+          label: "Market Share (%)",
+          data: share,
+          backgroundColor: "#16a34a",
+          yAxisID: "yShare"
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom" } },
+      scales: {
+        yVisits: {
+          type: "linear",
+          position: "left",
+          beginAtZero: true,
+          title: { display: true, text: "Visits" }
+        },
+        yShare: {
+          type: "linear",
+          position: "right",
+          beginAtZero: true,
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: "Share (%)" }
+        }
+      }
+    }
+  };
+
+  if (scenarioChart) {
+    scenarioChart.data = cfg.data;
+    scenarioChart.update();
+  } else {
+    scenarioChart = new Chart(canvas.getContext("2d"), cfg);
+  }
 }
 
 // -------------------------------------------------------------------
@@ -570,6 +666,7 @@ async function applyPartialUpdate(update) {
   if (update.business_category && update.business_category !== state.business_category) {
     state.business_category = update.business_category;
     changes.push(`NAICS → ${update.business_category}`);
+    if (window.showCategoryPois) window.showCategoryPois(update.business_category);
   }
 
   if (update.candidate_lat !== undefined && update.candidate_lon !== undefined) {

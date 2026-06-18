@@ -75,6 +75,84 @@ def api_categories():
     })
 
 
+@app.route("/api/cbgs")
+def api_cbgs():
+    """
+    CBG centroids from Azure SQL. Replaces the static GeoJSON fetch for the
+    demand-point overlay; the frontend draws a small dot per CBG so users
+    can see the demand grid the Huff model sums over.
+    """
+    from db import get_connection
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT cbg_id, centroid_lat, centroid_lon FROM cbgs "
+                "WHERE centroid_lat IS NOT NULL AND centroid_lon IS NOT NULL"
+            )
+            rows = cur.fetchall()
+        cbgs = [
+            {"cbg_id": str(r[0]), "lat": float(r[1]), "lon": float(r[2])}
+            for r in rows
+        ]
+        return jsonify({"ok": True, "cbgs": cbgs, "count": len(cbgs)})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/pois")
+def api_pois():
+    """
+    POIs (existing competitors) for a given NAICS code, from Azure SQL.
+    Filters to Worcester bounds and caps at 500 to keep the response small.
+    The frontend uses this to show what competitive landscape the user is
+    walking into BEFORE they run the model.
+    """
+    from db import get_connection
+
+    naics = (request.args.get("naics") or "").strip()
+    if not naics:
+        return jsonify({"ok": False, "error": "Missing required query param: naics"}), 400
+
+    # naics_code is BIGINT in Azure SQL (the migration maps SQLite INTEGER -> BIGINT).
+    # Pass an int so we don't rely on implicit varchar->bigint conversion.
+    try:
+        naics_param = int(naics)
+    except ValueError:
+        return jsonify({"ok": False, "error": f"Invalid NAICS code '{naics}'."}), 400
+
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT TOP 500 placekey, location_name, latitude, longitude, "
+                "wkt_area_sq_meters, naics_code "
+                "FROM worchester_businesses "
+                "WHERE naics_code = ? "
+                "  AND latitude BETWEEN ? AND ? "
+                "  AND longitude BETWEEN ? AND ?",
+                naics_param,
+                WORCESTER_BOUNDS["lat_min"], WORCESTER_BOUNDS["lat_max"],
+                WORCESTER_BOUNDS["lon_min"], WORCESTER_BOUNDS["lon_max"],
+            )
+            rows = cur.fetchall()
+        pois = [
+            {
+                "placekey": str(r[0]) if r[0] is not None else None,
+                "name": str(r[1]) if r[1] is not None else "Unknown",
+                "lat": float(r[2]),
+                "lon": float(r[3]),
+                "area_sqm": float(r[4]) if r[4] is not None else None,
+                "naics_code": str(r[5]) if r[5] is not None else naics,
+            }
+            for r in rows
+            if r[2] is not None and r[3] is not None
+        ]
+        return jsonify({"ok": True, "naics": naics, "pois": pois, "count": len(pois)})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.route("/dbcheck")
 def dbcheck():
     try:
@@ -339,9 +417,7 @@ def safe_competitor_sample(result, n=3):
 
 def generate_explanation(result):
     prompt = f"""
-You are an expert in retail location analytics.
-
-A Huff-style gravity model has been run with the following results:
+A location model has just produced these results for a proposed Worcester store:
 
 Predicted visits: {result.get("predicted_visits")}
 Market share: {result.get("market_share")}
@@ -350,10 +426,10 @@ Runtime (ms): {result.get("runtime_ms")}
 Competitors (sample):
 {safe_competitor_sample(result, 3)}
 
-Explain clearly:
-1. What the predicted visits and market share mean
-2. What factors likely influenced the result
-3. Keep it short and intuitive, about 3-5 sentences
+In 3-4 short sentences, plain language only (no jargon, no academic phrasing):
+1. State the predicted visits and market share in one sentence.
+2. Say in plain terms why this site likely scored that way (e.g. nearby competitors, distance to demand).
+3. Mention one important limitation (the model ignores rent, parking, visibility, zoning, demographics).
 """
 
     response = client.chat.completions.create(
@@ -361,7 +437,12 @@ Explain clearly:
         messages=[
             {
                 "role": "system",
-                "content": "You explain retail analytics and Huff model results clearly for students."
+                "content": (
+                    "You are a decision-support assistant for a Worcester store-location tool. "
+                    "Write in plain, practical language a small business owner would use. "
+                    "No academic phrasing, no 'spatial interaction dynamics' or 'distance-decay parameters'. "
+                    "Be brief and useful."
+                )
             },
             {
                 "role": "user",
@@ -393,16 +474,29 @@ def answer_question(question, result, inputs=None, history=None, scenarios=None)
         scenarios_block = "Previously saved scenarios for comparison:\n" + "\n".join(lines) + "\n\n"
 
     system_prompt = (
-        "You are a helpful data science assistant for a location analytics web app. "
-        "You remember the user's previous questions and saved scenarios within this conversation "
-        "and can reference them when answering follow-up questions.\n\n"
+        "You are the assistant for a Worcester, MA store-location decision-support tool. "
+        "Your job is to help a non-technical user evaluate candidate business locations using "
+        "the Huff model results, map, and saved scenarios shown in the app.\n\n"
+        "Tone:\n"
+        "- Plain, practical language. No academic phrasing, no 'spatial interaction dynamics', "
+        "  no 'distance-decay'. Talk like a helpful analyst, not a textbook.\n"
+        "- Short answers. Get to the point in a few sentences.\n"
+        "- When comparing scenarios, lead with the recommendation and the one or two metrics "
+        "  that drove it.\n\n"
         "Rules:\n"
-        "- Do not invent data; only use what is shown in the model result, inputs, and saved scenarios.\n"
-        "- Do not claim that you reran the Huff model. The app reruns the model only when the user's "
-        "  message contains a complete input set (NAICS code, latitude, longitude, floor area).\n"
-        "- If the user asks to rerun with new inputs but the message is missing some, tell them which "
-        "  inputs are still required.\n"
-        "- When comparing saved scenarios, be explicit about which scenario is being referenced."
+        "- Never invent data. Only use values shown in the model result, inputs, and saved scenarios.\n"
+        "- Never claim you reran the model. The app reruns the model only when the user gives a "
+        "  complete input set (NAICS, latitude, longitude, floor area). If inputs are missing, "
+        "  ask for the specific missing ones.\n"
+        "- When referencing a saved scenario, name it explicitly (e.g. 'Scenario 2').\n"
+        "- Always note key limitations once per answer (the model ignores rent, parking, "
+        "  visibility, zoning, and demographics) when giving a recommendation.\n\n"
+        "Out of scope — politely refuse and redirect:\n"
+        "- General homework, essays, coding help unrelated to this tool, personal advice, "
+        "  politics, entertainment, medical or legal advice, or anything not about Worcester "
+        "  store-location decisions. Example refusal: 'I can only help with Worcester "
+        "  store-location decisions in this tool — running scenarios, comparing sites, "
+        "  understanding competitors. Want to try a different location?'"
     )
 
     context_prompt = (

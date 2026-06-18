@@ -2,96 +2,164 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>AI-Assisted Location Decision Support System</title>
+  <title>ALSDS · Worcester Venture Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Domine:wght@500;600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 
 <body>
-  <header>
-    <h1>AI-Assisted Location Decision Support System</h1>
-    <p>Worcester, MA | Huff Model Prototype</p>
+  <!-- Animated background blobs (Liquid Obsidian aesthetic) -->
+  <div class="blob blob-azure" aria-hidden="true"></div>
+  <div class="blob blob-slate" aria-hidden="true"></div>
+
+  <!-- Full-bleed map -->
+  <div id="map" class="map-canvas"></div>
+
+  <!-- Top floating dock -->
+  <header class="top-dock glass">
+    <div class="brand">
+      <div class="brand-mark">◈</div>
+      <div class="brand-text">
+        <div class="brand-title">ALSDS</div>
+        <div class="brand-sub">Worcester Venture Map</div>
+      </div>
+    </div>
+
+    <div class="dock-search glass-inner">
+      <span class="dock-icon">⌖</span>
+      <select id="categorySelect" class="dock-select">
+        <option value="">Pick a calibrated business category…</option>
+      </select>
+    </div>
+
+    <div class="dock-actions">
+      <button id="resetBtn" type="button" class="icon-btn" title="Start over">↺</button>
+      <button id="saveScenarioBtn" type="button" class="icon-btn accent" title="Save scenario" disabled>＋</button>
+      <button id="detailsBtn" type="button" class="icon-btn" title="Toggle competitor details">▤</button>
+    </div>
   </header>
 
-  <main class="layout">
-    <section class="panel chat-panel">
-      <h2>Guided Chatbot</h2>
+  <!-- Floating location pill (top-center) -->
+  <div id="selectedLocation" class="location-pill glass">
+    Click anywhere inside the Worcester service area to place a candidate site.
+  </div>
 
-      <div id="chatMessages" class="chat-messages"></div>
-
-      <div class="category-row">
-        <label for="categorySelect" class="category-label">Calibrated categories:</label>
-        <select id="categorySelect" class="category-select">
-          <option value="">— loading categories —</option>
-        </select>
+  <!-- Right-side chat / advisor panel -->
+  <aside class="advisor-panel glass" id="advisorPanel">
+    <header class="advisor-head">
+      <div class="advisor-icon">✦</div>
+      <div>
+        <div class="advisor-title">Aether · Huff Advisor</div>
+        <div class="advisor-sub">Analyzing location feasibility…</div>
       </div>
+    </header>
 
-      <div class="input-row">
-        <input id="chatInput" type="text" placeholder="Type a category (e.g. liquor store) or question..." />
-        <button id="sendBtn">Send</button>
-      </div>
+    <div id="chatMessages" class="chat-messages"></div>
 
-      <div class="hint">
-        Tip: pick a category from the dropdown, or type a label like "bakery" / "liquor store"
-        / "gas station". Only NAICS codes with calibrated parameters work — uncalibrated
-        ones (coffee shop, gym, etc.) are not in this dataset.
-      </div>
-    </section>
+    <!-- Inline stat cards (populated after a run) -->
+    <div id="resultCards" class="advisor-stats empty">
+      <div class="result-empty">Run the model to see site potential, market share, and competitor pressure.</div>
+    </div>
 
-    <section class="panel map-panel">
-      <h2>Map</h2>
-      <div id="map"></div>
-      <div id="selectedLocation" class="selected-location">
-        No candidate location selected yet.
-      </div>
-    </section>
+    <div class="advisor-input">
+      <input id="chatInput" type="text" placeholder="Ask about site feasibility…" autocomplete="off" />
+      <button id="sendBtn" class="send-btn" title="Send">➤</button>
+    </div>
 
-    <section class="panel result-panel">
-      <div class="result-header">
-        <h2>Model Result</h2>
-        <div class="result-actions">
-          <button id="saveScenarioBtn" type="button" class="secondary-btn" disabled>
-            Save scenario for comparison
-          </button>
-          <button id="resetBtn" type="button" class="secondary-btn">
-            Start over
-          </button>
+    <div class="suggestion-chips">
+      <button class="chip" data-suggest="Compare the saved scenarios">Compare scenarios</button>
+      <button class="chip" data-suggest="What are the main competitors?">Main competitors</button>
+      <button class="chip" data-suggest="What are the limitations of this result?">Limitations</button>
+    </div>
+  </aside>
+
+  <!-- Bottom-left stat stack -->
+  <section class="bottom-stack">
+    <div class="stack-row">
+      <div class="glass mini-card primary-card" id="visitsCard">
+        <div class="mini-label">Predicted Visits</div>
+        <div class="mini-value"><span id="visitsValue">—</span><span class="mini-unit">/mo</span></div>
+        <div class="mini-bars" id="visitsBars">
+          <span></span><span></span><span></span><span></span><span></span><span></span>
         </div>
       </div>
 
-      <div id="resultCards" class="result-cards empty">
-        <div class="result-empty">Run the model to see predicted visits, market share, and competitor attraction.</div>
+      <div class="glass mini-card growth-card" id="shareCard">
+        <div class="growth-icon">↗</div>
+        <div class="growth-value" id="shareValue">—</div>
+        <div class="growth-label">Market Share</div>
       </div>
+    </div>
 
-      <h3>Competitor Attraction</h3>
-      <div class="chart-wrap">
-        <canvas id="competitorChart" height="160"></canvas>
-        <div id="chartEmpty" class="chart-empty">No competitor data yet.</div>
+    <div class="glass layer-pill">
+      <div class="layer-icon">◇</div>
+      <div>
+        <div class="layer-title">Demand Grid Active</div>
+        <div class="layer-sub" id="layerSub">CBG centroids streamed from Azure SQL</div>
       </div>
+    </div>
+  </section>
 
-      <h3>Nearby Competitors / Attraction Scores</h3>
-      <div id="competitorTable" class="table-wrap"></div>
-    </section>
+  <!-- Slide-in details drawer (competitor chart, table, scenario comparison) -->
+  <aside class="details-drawer glass" id="detailsDrawer" hidden>
+    <header class="drawer-head">
+      <h2>Competitor & Scenario Detail</h2>
+      <button id="closeDetailsBtn" class="icon-btn" title="Close">✕</button>
+    </header>
 
-    <section class="panel comparison-panel">
-      <div class="result-header">
-        <h2>Scenario Comparison</h2>
-        <button id="clearScenariosBtn" type="button" class="secondary-btn" disabled>Clear all</button>
-      </div>
-      <div id="comparisonContent" class="comparison-content">
-        <div class="result-empty">
-          Saved scenarios appear here side-by-side. Run the model and click "Save scenario" to compare alternatives.
-        </div>
-      </div>
-    </section>
-  </main>
+    <h3>Competitor Attraction</h3>
+    <div class="chart-wrap">
+      <canvas id="competitorChart" height="160"></canvas>
+      <div id="chartEmpty" class="chart-empty">No competitor data yet.</div>
+    </div>
+
+    <h3>Nearby Competitors</h3>
+    <div id="competitorTable" class="table-wrap">
+      <div class="result-empty">Run the model to see competitors.</div>
+    </div>
+
+    <div class="drawer-section-head">
+      <h3>Scenario Comparison</h3>
+      <button id="clearScenariosBtn" type="button" class="ghost-btn" disabled>Clear</button>
+    </div>
+    <div id="comparisonContent" class="comparison-content">
+      <div class="result-empty">Save two or more runs to compare them.</div>
+    </div>
+    <div class="chart-wrap" id="scenarioChartWrap" style="display:none;">
+      <canvas id="scenarioChart" height="180"></canvas>
+    </div>
+  </aside>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="/static/naics_map.js"></script>
   <script src="/static/map.js"></script>
   <script src="/static/chat.js"></script>
+  <script>
+    // Details drawer + suggestion chips wiring (UI-only; logic lives in chat.js)
+    (function () {
+      const drawer = document.getElementById("detailsDrawer");
+      const open = () => drawer.removeAttribute("hidden");
+      const close = () => drawer.setAttribute("hidden", "");
+      document.getElementById("detailsBtn").addEventListener("click", () => {
+        drawer.hasAttribute("hidden") ? open() : close();
+      });
+      document.getElementById("closeDetailsBtn").addEventListener("click", close);
+
+      document.querySelectorAll(".chip[data-suggest]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const input = document.getElementById("chatInput");
+          input.value = btn.getAttribute("data-suggest");
+          document.getElementById("sendBtn").click();
+        });
+      });
+    })();
+  </script>
 </body>
 </html>
