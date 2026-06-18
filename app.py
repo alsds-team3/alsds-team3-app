@@ -1,11 +1,28 @@
 import os
 import re
+import logging
+import traceback
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify, render_template
 from openai import AzureOpenAI
 
 from db import test_connection
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+app.logger.setLevel(logging.INFO)
+
+# Last unsanitised error, surfaced via /api/debug/last_error for diagnosis
+# without needing to scroll Azure Log Stream.
+_LAST_ERROR = {"ts": None, "endpoint": None, "error": None, "traceback": None}
+
+
+def _record_error(endpoint, exc):
+    _LAST_ERROR["ts"] = datetime.now(timezone.utc).isoformat()
+    _LAST_ERROR["endpoint"] = endpoint
+    _LAST_ERROR["error"] = f"{type(exc).__name__}: {exc}"
+    _LAST_ERROR["traceback"] = traceback.format_exc()
+    app.logger.exception("Error in %s", endpoint)
 
 
 # -------------------------
@@ -50,6 +67,19 @@ def is_in_worcester(lat, lon):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """Inline SVG favicon — azure diamond matching the in-app brand mark."""
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+        '<rect width="32" height="32" rx="8" fill="#101418"/>'
+        '<path d="M16 5l11 11-11 11L5 16z" fill="none" stroke="#a1c9ff" '
+        'stroke-width="2.5" stroke-linejoin="round"/>'
+        '</svg>'
+    )
+    return svg, 200, {"Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400"}
 
 
 @app.route("/health")
@@ -133,7 +163,8 @@ def api_cbgs():
         ]
         return jsonify({"ok": True, "cbgs": cbgs, "count": len(cbgs)})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        _record_error("/api/cbgs", exc)
+        return jsonify({"ok": False, "error": _sanitize_exception(exc)}), 500
 
 
 @app.route("/api/pois")
@@ -186,7 +217,8 @@ def api_pois():
         ]
         return jsonify({"ok": True, "naics": naics, "pois": pois, "count": len(pois)})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        _record_error("/api/pois", exc)
+        return jsonify({"ok": False, "error": _sanitize_exception(exc)}), 500
 
 
 @app.route("/dbcheck")
@@ -418,6 +450,7 @@ def api_run_huff():
         })
 
     except Exception as e:
+        _record_error("/api/run_huff", e)
         return jsonify({"ok": False, "error": _sanitize_exception(e)}), 500
 
 
@@ -458,7 +491,16 @@ def api_ask():
         return jsonify({"ok": True, "answer": answer})
 
     except Exception as e:
+        _record_error("/api/ask", e)
         return jsonify({"ok": False, "error": _sanitize_exception(e)}), 500
+
+
+@app.route("/api/debug/last_error")
+def api_debug_last_error():
+    """Returns the most recent unsanitised server error. Use this when the UI
+    shows a generic 'database backend unavailable' message and you need the
+    underlying pyodbc / OpenAI / driver detail to diagnose it."""
+    return jsonify(_LAST_ERROR)
 
 
 # Patterns we treat as obvious off-topic or jailbreak attempts.
