@@ -36,7 +36,7 @@ function drawBoundsRectangle() {
       [WORCESTER_BOUNDS.lat_min, WORCESTER_BOUNDS.lon_min],
       [WORCESTER_BOUNDS.lat_max, WORCESTER_BOUNDS.lon_max]
     ],
-    { color: "#16a34a", weight: 2, fill: false, dashArray: "6 4" }
+    { color: "#86efac", weight: 2, opacity: 0.85, fill: false, dashArray: "6 4" }
   ).addTo(map).bindTooltip("Worcester service area", { sticky: true });
 }
 
@@ -57,11 +57,12 @@ fetch("/api/cbgs")
     cbgLayer = L.layerGroup().addTo(map);
     data.cbgs.forEach(c => {
       L.circleMarker([c.lat, c.lon], {
-        radius: 3,
-        weight: 1,
-        color: "#2563eb",
-        fillColor: "#2563eb",
-        fillOpacity: 0.4
+        radius: 5,
+        weight: 1.5,
+        color: "#a1c9ff",
+        fillColor: "#a1c9ff",
+        fillOpacity: 0.85,
+        className: "cbg-glow"
       })
         .addTo(cbgLayer)
         .bindTooltip(`CBG ${c.cbg_id}`, { sticky: true });
@@ -142,10 +143,12 @@ function plotCompetitors(competitors) {
   competitors.forEach(comp => {
     if (comp.lat && comp.lon) {
       L.circleMarker([comp.lat, comp.lon], {
-        radius: 6,
-        weight: 1,
-        color: "#dc2626",
-        fillOpacity: 0.7
+        radius: 9,
+        weight: 2,
+        color: "#ff6b6b",
+        fillColor: "#ff8a8a",
+        fillOpacity: 0.95,
+        className: "competitor-glow"
       })
         .addTo(competitorLayer)
         .bindPopup(
@@ -179,11 +182,12 @@ function showCategoryPois(naics) {
       categoryPoiLayer = L.layerGroup().addTo(map);
       data.pois.forEach(p => {
         L.circleMarker([p.lat, p.lon], {
-          radius: 5,
-          weight: 1,
-          color: "#f59e0b",
-          fillColor: "#f59e0b",
-          fillOpacity: 0.55
+          radius: 8,
+          weight: 2,
+          color: "#ffb782",
+          fillColor: "#ffb782",
+          fillOpacity: 0.95,
+          className: "poi-glow"
         })
           .addTo(categoryPoiLayer)
           .bindPopup(

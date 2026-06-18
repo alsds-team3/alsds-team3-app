@@ -31,12 +31,12 @@
       </div>
     </div>
 
-    <div class="dock-search glass-inner">
-      <span class="dock-icon">⌖</span>
-      <select id="categorySelect" class="dock-select">
-        <option value="">Pick a calibrated business category…</option>
-      </select>
+    <div class="dock-status glass-inner">
+      <span class="status-dot"></span>
+      <span class="status-text">Worcester service area · Azure SQL live</span>
     </div>
+    <!-- Hidden select retained for naics_map.js's onCategoriesLoaded hook -->
+    <select id="categorySelect" hidden></select>
 
     <div class="dock-actions">
       <button id="resetBtn" type="button" class="icon-btn" title="Start over">↺</button>
@@ -67,8 +67,11 @@
       <div class="result-empty">Run the model to see site potential, market share, and competitor pressure.</div>
     </div>
 
+    <!-- Adaptive input card — rendered by chat.js based on current step -->
+    <div id="inputCard" class="input-card"></div>
+
     <div class="advisor-input">
-      <input id="chatInput" type="text" placeholder="Ask about site feasibility…" autocomplete="off" />
+      <input id="chatInput" type="text" placeholder="Type a category, coordinates, or a question…" autocomplete="off" />
       <button id="sendBtn" class="send-btn" title="Send">➤</button>
     </div>
 

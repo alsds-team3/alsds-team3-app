@@ -65,14 +65,49 @@ def api_bounds():
 @app.route("/api/categories")
 def api_categories():
     """
-    Return the authoritative list of NAICS codes that have calibrated
-    alpha/beta parameters. The frontend uses this to render a dropdown so
-    users can't pick uncalibrated categories.
+    Three NAICS tiers (per Mohsen's Module 9 guidance):
+      - calibrated: 23 codes with measured alpha/beta in the parameters table.
+      - known:      ~130 codes present in worchester_businesses; uncalibrated
+                    runs use fallback alpha=1, beta=2.
+      - aliases:    plain-language label -> NAICS code map.
+
+    The frontend uses `calibrated` for "trusted" picker chips and `known` to
+    permit fallback runs while still rejecting NAICS codes that have zero
+    historical records in our dataset.
     """
     return jsonify({
-        "categories": CATEGORIES,
+        "categories": CATEGORIES,                # tier 1 — calibrated
+        "known_naics": _known_naics_list(),      # tier 1 + tier 2
         "aliases": NAICS_CATEGORY_MAP,
     })
+
+
+# In-process cache of the ~130 NAICS codes that exist in worchester_businesses.
+# Populated on first hit, refreshed only on process restart.
+_KNOWN_NAICS_CACHE = None
+
+
+def _known_naics_list():
+    """Return the deduped sorted list of NAICS codes present in POI data."""
+    global _KNOWN_NAICS_CACHE
+    if _KNOWN_NAICS_CACHE is not None:
+        return _KNOWN_NAICS_CACHE
+
+    from db import get_connection
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT DISTINCT naics_code FROM worchester_businesses "
+                "WHERE naics_code IS NOT NULL"
+            )
+            codes = sorted({str(r[0]) for r in cur.fetchall() if r[0] is not None})
+        _KNOWN_NAICS_CACHE = codes
+        return codes
+    except Exception:
+        # If Azure SQL is unreachable, fall back to the calibrated 23 so the
+        # UI still works — callers will see strict-mode behavior.
+        return [c["naics"] for c in CATEGORIES]
 
 
 @app.route("/api/cbgs")
@@ -299,17 +334,26 @@ def api_run_huff():
                     "available": CATEGORIES,
                 }), 400
 
-        # Reject codes that aren't calibrated. Without this, the user gets a
-        # generic 500 from the engine; with it, they get the list of codes
-        # that actually work.
+        # 3-tier NAICS check (per Mohsen's Module 9 guidance):
+        #   tier 1 (calibrated)   -> engine uses parameters table
+        #   tier 2 (known POIs)   -> engine falls back to alpha=1, beta=2
+        #   tier 3 (unknown)      -> reject with the historical-records message
         calibrated_codes = {c["naics"] for c in CATEGORIES}
-        if business_category not in calibrated_codes:
+        known_codes = set(_known_naics_list())
+
+        if business_category in calibrated_codes:
+            naics_tier = "calibrated"
+        elif business_category in known_codes:
+            naics_tier = "fallback"
+        else:
             return jsonify({
                 "ok": False,
                 "error": (
-                    f"NAICS {business_category} is not in the calibrated dataset. "
-                    "Pick one of the calibrated categories below."
+                    f"There are no historical records for NAICS {business_category} "
+                    "in our Worcester dataset, so the model can't produce any "
+                    "results for this business category."
                 ),
+                "tier": "unknown",
                 "available": CATEGORIES,
             }), 400
 
@@ -333,14 +377,30 @@ def api_run_huff():
         if floor_area <= 0:
             return jsonify({"ok": False, "error": "floor_area must be greater than zero."}), 400
 
-        result = run_huff_model(
-            candidate_lat=candidate_lat,
-            candidate_lon=candidate_lon,
-            business_category=business_category,
-            floor_area=floor_area,
-            db_connection=None  # Teams can replace this with Azure SQL usage
-        )
+        try:
+            result = run_huff_model(
+                candidate_lat=candidate_lat,
+                candidate_lon=candidate_lon,
+                business_category=business_category,
+                floor_area=floor_area,
+                db_connection=None
+            )
+        except ValueError as ve:
+            # The engine raises ValueError when a known-tier NAICS has no
+            # usable POI/visit data after joining. Convert to the same
+            # historical-records message the user would have seen for tier 3.
+            return jsonify({
+                "ok": False,
+                "error": (
+                    f"There are no historical records for NAICS {business_category} "
+                    "in our Worcester dataset, so the model can't produce any "
+                    "results for this business category."
+                ),
+                "tier": "unknown",
+                "detail": str(ve),
+            }), 400
 
+        result["naics_tier"] = naics_tier
         explanation = generate_explanation(result)
 
         return jsonify({
@@ -351,6 +411,7 @@ def api_run_huff():
                 "business_category": business_category,
                 "floor_area": floor_area
             },
+            "naics_tier": naics_tier,
             "result": result,
             "explanation": explanation
         })

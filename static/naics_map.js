@@ -104,9 +104,15 @@ function resolveBusinessCategory(input) {
   if (!input) return null;
   const text = String(input).trim().toLowerCase();
 
-  // Bare NAICS code — only accept calibrated ones.
+  // Bare NAICS code — accept any code that the server knows about
+  // (calibrated 23 OR uncalibrated-but-present-in-POI-data). The server
+  // will reject truly unknown codes with the historical-records message.
   if (/^\d{2,6}$/.test(text)) {
-    return isCalibratedNaics(text) ? text : null;
+    if (isCalibratedNaics(text)) return text;
+    if (KNOWN_NAICS.has(text)) return text;
+    // KNOWN_NAICS may not be populated yet (race with /api/categories).
+    // Accept the code and let the server gate it.
+    return text;
   }
 
   // Exact label match in the alias table.
@@ -122,6 +128,11 @@ function resolveBusinessCategory(input) {
   return best ? NAICS_MAP[best] : null;
 }
 
+// All NAICS codes present in worchester_businesses (calibrated + fallback).
+// Populated from /api/categories. Used to permit fallback runs without
+// rejecting the request at the frontend.
+let KNOWN_NAICS = new Set();
+
 // Refresh from the server so client and server can't drift.
 fetch("/api/categories")
   .then(r => r.ok ? r.json() : null)
@@ -133,11 +144,25 @@ fetch("/api/categories")
     if (data.aliases && typeof data.aliases === "object") {
       Object.assign(NAICS_MAP, data.aliases);
     }
+    if (Array.isArray(data.known_naics)) {
+      KNOWN_NAICS = new Set(data.known_naics.map(String));
+    }
     if (typeof window.onCategoriesLoaded === "function") {
       window.onCategoriesLoaded(CALIBRATED_CATEGORIES);
     }
   })
   .catch(() => { /* keep local fallback */ });
+
+function isKnownNaics(code) {
+  return KNOWN_NAICS.has(String(code));
+}
+function naicsTier(code) {
+  if (isCalibratedNaics(code)) return "calibrated";
+  if (isKnownNaics(code)) return "fallback";
+  return "unknown";
+}
+window.isKnownNaics = isKnownNaics;
+window.naicsTier = naicsTier;
 
 window.NAICS_MAP = NAICS_MAP;
 window.resolveBusinessCategory = resolveBusinessCategory;

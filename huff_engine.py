@@ -89,18 +89,24 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     # ------------------------------------------------------------------
     # Step 1: Calibrated parameters for this NAICS code
     # ------------------------------------------------------------------
+    # 3-tier parameter resolution (per Module 9 guidance from Mohsen):
+    #   1. Calibrated NAICS  -> use parameters table row
+    #   2. Uncalibrated but present in worchester_businesses -> fallback alpha=1, beta=2
+    #   3. Not present at all -> raise; the API layer turns this into the
+    #      "no historical records" user message.
     cur.execute(
         "SELECT alpha, beta FROM parameters WHERE naics_code = ?",
         (naics,),
     )
     param_row = cur.fetchone()
-    if param_row is None:
-        raise ValueError(
-            f"No calibrated alpha/beta parameters found for NAICS code {naics}."
-        )
-    # pyodbc returns positional tuples, not dict-like Rows
-    alpha = float(param_row[0])
-    beta = float(param_row[1])
+    if param_row is not None:
+        alpha = float(param_row[0])
+        beta = float(param_row[1])
+        used_fallback_params = False
+    else:
+        alpha = 1.0
+        beta = 2.0
+        used_fallback_params = True
 
     # ------------------------------------------------------------------
     # Step 2: Competing POIs for this NAICS code
@@ -179,7 +185,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
 
     if cbg_agg.empty:
         # No CBGs with observed visits — model can't run.
-        return 0.0, 0.0, []
+        return 0.0, 0.0, [], used_fallback_params
 
     # ------------------------------------------------------------------
     # Step 8: CBG centroids and distance to candidate
@@ -196,7 +202,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     cbg_agg = cbg_agg.merge(cbg_centroids, on="cbg_id")
 
     if cbg_agg.empty:
-        return 0.0, 0.0, []
+        return 0.0, 0.0, [], used_fallback_params
 
     cbg_agg["distance"] = _haversine_vectorized(
         candidate_lat, candidate_lon,
@@ -272,7 +278,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
             ),
         })
 
-    return total_predicted_visits, market_share_proxy, competitors
+    return total_predicted_visits, market_share_proxy, competitors, used_fallback_params
 
 
 # -------------------------------------------------------------------
@@ -321,7 +327,7 @@ def run_huff_model(
         own_conn = True
 
     try:
-        total_predicted_visits, market_share, competitors = huff(
+        total_predicted_visits, market_share, competitors, used_fallback_params = huff(
             naics=naics,
             candidate_lon=candidate_lon,
             candidate_lat=candidate_lat,
@@ -337,16 +343,25 @@ def run_huff_model(
 
     runtime_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
+    parameter_source = "fallback_default" if used_fallback_params else "calibrated"
+    notes = (
+        "V4 Huff model (Team 3) — Azure SQL backed, indexed queries, "
+        "precomputed CBG centroids, haversine distance, NAICS-level "
+        "filtering server-side. Data source: alsds_team3_db (Azure SQL)."
+    )
+    if used_fallback_params:
+        notes += (
+            f" NAICS {naics} is not calibrated in the parameters table; "
+            "the engine used default alpha=1, beta=2 — results are indicative only."
+        )
+
     return {
         "predicted_visits": round(total_predicted_visits, 2),
         "market_share": round(market_share, 6),
         "competitors": competitors,
         "runtime_ms": runtime_ms,
-        "notes": (
-            "V4 Huff model (Team 3) — Azure SQL backed, indexed queries, "
-            "precomputed CBG centroids, haversine distance, NAICS-level "
-            "filtering server-side. Data source: alsds_team3_db (Azure SQL)."
-        ),
+        "parameter_source": parameter_source,
+        "notes": notes,
         "inputs": {
             "candidate_lat": candidate_lat,
             "candidate_lon": candidate_lon,

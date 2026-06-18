@@ -19,22 +19,129 @@ const state = {
 
 let competitorChart = null;
 let scenarioChart = null;
+let CATEGORIES_LIST = [];
+
+const inputCard = document.getElementById("inputCard");
 
 addBotMessage(
   "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
-  "Pick a category from the dropdown below, type a label like 'liquor store' or " +
-  "'bakery', or enter a calibrated NAICS code (e.g. 4441)."
+  "Pick a category below, type a label like 'liquor store', or enter a calibrated NAICS code."
 );
 
-window.onCategoriesLoaded = function (cats) {
-  const sel = document.getElementById("categorySelect");
-  if (!sel || sel.dataset.populated === "1") return;
-  sel.dataset.populated = "1";
-  sel.innerHTML =
-    '<option value="">— pick a calibrated category —</option>' +
-    cats.map(c =>
+// -------------------------------------------------------------------------
+// Adaptive input card — renders contextual pickers in the chat based on
+// state.step so users can click instead of type for the structured inputs.
+// -------------------------------------------------------------------------
+function renderInputCard() {
+  if (!inputCard) return;
+
+  if (state.step === "category") {
+    const cats = CATEGORIES_LIST.length ? CATEGORIES_LIST :
+      (window.getCalibratedCategories ? window.getCalibratedCategories() : []);
+    const popular = cats.slice(0, 8);
+    const optionHtml = cats.map(c =>
       `<option value="${c.naics}">${escapeHtml(c.label)} (${c.naics})</option>`
     ).join("");
+
+    inputCard.innerHTML = `
+      <div class="card-head">Pick a business category</div>
+      <div class="pick-row">
+        <select class="pick-select" id="inlineCatSelect">
+          <option value="">— all calibrated categories —</option>
+          ${optionHtml}
+        </select>
+      </div>
+      <div class="picker-chips">
+        ${popular.map(c =>
+          `<button type="button" class="pick-chip" data-naics="${c.naics}">
+             ${escapeHtml(c.label)}<span class="code">${c.naics}</span>
+           </button>`
+        ).join("")}
+      </div>
+    `;
+    const sel = document.getElementById("inlineCatSelect");
+    sel.addEventListener("change", () => {
+      if (sel.value) submitInline(sel.value);
+    });
+    inputCard.querySelectorAll(".pick-chip").forEach(btn => {
+      btn.addEventListener("click", () => submitInline(btn.dataset.naics));
+    });
+    return;
+  }
+
+  if (state.step === "location") {
+    inputCard.innerHTML = `
+      <div class="card-head">Pick a candidate location</div>
+      <div class="pick-row">
+        <input class="pick-input" id="inlineCoord" type="text"
+               placeholder="42.2671, -71.8003" autocomplete="off" />
+        <button type="button" class="pick-action" id="inlineCoordGo">Use</button>
+      </div>
+      <div class="picker-chips">
+        <span class="pick-chip" style="cursor:default;background:transparent;border:none;color:var(--on-surface-variant);">
+          or click anywhere on the map →
+        </span>
+      </div>
+    `;
+    const inp = document.getElementById("inlineCoord");
+    const go = document.getElementById("inlineCoordGo");
+    const fire = () => { if (inp.value.trim()) submitInline(inp.value.trim()); };
+    go.addEventListener("click", fire);
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") fire(); });
+    return;
+  }
+
+  if (state.step === "floor_area") {
+    const presets = [250, 500, 1000, 2000, 5000];
+    inputCard.innerHTML = `
+      <div class="card-head">Pick a floor area (m²)</div>
+      <div class="pick-row">
+        <input class="pick-input" id="inlineArea" type="number" min="1" step="1"
+               placeholder="e.g. 1000" autocomplete="off" />
+        <button type="button" class="pick-action" id="inlineAreaGo">Run</button>
+      </div>
+      <div class="picker-chips">
+        ${presets.map(a =>
+          `<button type="button" class="pick-chip" data-area="${a}">
+             ${a.toLocaleString()} m²
+           </button>`
+        ).join("")}
+      </div>
+    `;
+    const inp = document.getElementById("inlineArea");
+    const go = document.getElementById("inlineAreaGo");
+    const fire = () => { if (inp.value.trim()) submitInline(inp.value.trim()); };
+    go.addEventListener("click", fire);
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") fire(); });
+    inputCard.querySelectorAll(".pick-chip").forEach(btn => {
+      btn.addEventListener("click", () => submitInline(btn.dataset.area));
+    });
+    return;
+  }
+
+  // step === "ready" — no structured input needed, hide the card.
+  inputCard.innerHTML = "";
+}
+
+function submitInline(text) {
+  chatInput.value = String(text);
+  handleSend();
+}
+
+renderInputCard();
+
+window.onCategoriesLoaded = function (cats) {
+  CATEGORIES_LIST = Array.isArray(cats) ? cats : [];
+  const sel = document.getElementById("categorySelect");
+  if (sel && sel.dataset.populated !== "1") {
+    sel.dataset.populated = "1";
+    sel.innerHTML =
+      '<option value="">— pick a calibrated category —</option>' +
+      CATEGORIES_LIST.map(c =>
+        `<option value="${c.naics}">${escapeHtml(c.label)} (${c.naics})</option>`
+      ).join("");
+  }
+  renderInputCard();
 };
 
 const categorySelect = document.getElementById("categorySelect");
@@ -56,6 +163,7 @@ const resetBtn = document.getElementById("resetBtn");
 if (resetBtn) {
   resetBtn.addEventListener("click", () => {
     state.step = "category";
+    renderInputCard();
     state.business_category = null;
     state.business_category_label = null;
     state.candidate_lat = null;
@@ -87,6 +195,7 @@ window.onMapLocationSelected = function (location) {
       "Now enter the proposed store floor area in square meters."
     );
     state.step = "floor_area";
+    renderInputCard();
     return;
   }
 
@@ -142,6 +251,7 @@ async function handleSend() {
       state.business_category = resolved;
       state.business_category_label = text;
       state.step = "location";
+      renderInputCard();
 
       if (window.showCategoryPois) {
         window.showCategoryPois(resolved);
@@ -183,6 +293,7 @@ async function handleSend() {
       }
 
       state.step = "floor_area";
+      renderInputCard();
       addBotMessage("Great. Now enter the proposed store floor area in square meters.");
       return;
     }
@@ -197,6 +308,7 @@ async function handleSend() {
 
       state.floor_area = area;
       state.step = "ready";
+      renderInputCard();
 
       addBotMessage(
         `Thanks. I will run the Huff model for NAICS ${state.business_category}, ` +
@@ -231,6 +343,7 @@ async function rerunModelFromMessage(inputs) {
   state.candidate_lon = inputs.candidate_lon;
   state.floor_area = inputs.floor_area;
   state.step = "ready";
+  renderInputCard();
 
   if (window.showCategoryPois) window.showCategoryPois(state.business_category);
 
@@ -287,7 +400,15 @@ async function runModel() {
 
   saveScenarioBtn.disabled = false;
 
+  let tierNote = "";
+  if (data.naics_tier === "fallback") {
+    tierNote =
+      `⚠ NAICS ${state.business_category} is not calibrated. The engine used ` +
+      "default parameters (α=1, β=2) — treat these numbers as a rough estimate.\n\n";
+  }
+
   addBotMessage(
+    tierNote +
     (data.explanation ? data.explanation + "\n\n" : "") +
     "You can now: (a) ask follow-up questions, (b) click a new spot on the map to rerun there, " +
     "(c) type 'use NAICS 5121', 'change category to gym', or '1500 sqm' to update just one input, " +
