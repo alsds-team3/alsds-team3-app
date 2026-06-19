@@ -153,6 +153,43 @@ function looksUnsafe(text) {
   return UNSAFE_PATTERNS.some(rx => rx.test(text));
 }
 
+// Off-topic detector. Catches questions that are clearly not about location
+// decisions — recipes, weather, code help, trivia, etc. — so we can refuse
+// politely instead of falling through to a step-specific parse error.
+const OFF_TOPIC_PATTERNS = [
+  /\b(recipe|cook|bake|ingredients?|how to make)\b/i,
+  /\b(weather|forecast|temperature today|rain|snow)\b/i,
+  /\b(joke|riddle|poem|story|essay|homework)\b/i,
+  /\b(stock|crypto|bitcoin|ethereum|nft)\b/i,
+  /\b(diagnose|symptom|medicine|prescription|dose|disease)\b/i,
+  /\b(lawyer|legal advice|sue|lawsuit|contract law)\b/i,
+  /\b(translate|translation)\s+(this|that|into|to)\b/i,
+  /\b(write|generate)\s+(me\s+)?(a\s+)?(code|program|script|python|javascript|essay|email)\b/i,
+  /\b(president|election|politics|war|religion)\b/i,
+];
+
+const ON_TOPIC_HINTS = /\b(naics|huff|worcester|store|business|cafe|bakery|liquor|bank|gas|hardware|location|site|map|cbg|competitor|visit|market\s+share|floor\s+area|m2|sq\s*m|coordinates?|lat|lon|scenario)\b/i;
+
+function looksOffTopic(text) {
+  if (ON_TOPIC_HINTS.test(text)) return false;
+  return OFF_TOPIC_PATTERNS.some(rx => rx.test(text));
+}
+
+const OFF_TOPIC_REPLIES = [
+  "That's outside what I can help with — I'm built for Worcester store-location decisions only. " +
+  "Want to pick a business category and drop a candidate pin instead?",
+  "I'd love to help, but I can only run the Huff site-feasibility model for Worcester businesses. " +
+  "Pick a category like \"bakery\" or \"liquor store\" to get started.",
+  "That's not in my lane — I'm focused on Worcester retail site analysis. " +
+  "Try a category from the chips below, or click a location on the map.",
+];
+let _offTopicIdx = 0;
+function offTopicReply() {
+  const r = OFF_TOPIC_REPLIES[_offTopicIdx % OFF_TOPIC_REPLIES.length];
+  _offTopicIdx += 1;
+  return r;
+}
+
 function friendlyError(raw) {
   const s = String(raw || "");
   if (/pyodbc|odbc|sql\s*server|connection\s+timeout|tcp\s+provider/i.test(s)) {
@@ -270,6 +307,10 @@ async function handleSend() {
       "comparing sites, interpreting competitors. Try a category like \"bakery\" or " +
       "drop a pin on the map."
     );
+    return;
+  }
+  if (looksOffTopic(text)) {
+    addBotMessage(offTopicReply());
     return;
   }
 

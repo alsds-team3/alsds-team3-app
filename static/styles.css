@@ -530,6 +530,25 @@ body { position: relative; font-size: 14px; line-height: 1.5; }
   font-size: 13.5px;
 }
 .advisor-input input::placeholder { color: var(--on-surface-variant); }
+.reset-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 14px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.3s ease;
+}
+.reset-btn:hover {
+  color: var(--primary);
+  border-color: rgba(161, 201, 255, 0.4);
+  transform: rotate(-90deg);
+}
 .send-btn {
   width: 36px; height: 36px;
   border-radius: 50%;
