@@ -237,8 +237,9 @@ clearScenariosBtn.addEventListener("click", clearScenarios);
 const resetBtn = document.getElementById("resetBtn");
 if (resetBtn) {
   resetBtn.addEventListener("click", () => {
+    // 1. Clear in-flight scenario state, but KEEP chat messages and
+    //    state.history so the conversation stays visible for context.
     state.step = "category";
-    renderInputCard();
     state.business_category = null;
     state.business_category_label = null;
     state.candidate_lat = null;
@@ -246,10 +247,47 @@ if (resetBtn) {
     state.floor_area = null;
     state.last_result = null;
     state.last_inputs = null;
-    state.history = [];
+    // state.history intentionally preserved
+    // state.scenarios intentionally preserved (saved comparisons stay)
+
+    // 2. Reset the map: clear candidate pin, competitor + POI overlays,
+    //    and zoom back to the Worcester service-area bounds.
+    if (window.resetMapView) window.resetMapView();
+
+    // 3. Clear the result panel + bottom-left mini-cards so old numbers
+    //    don't linger next to the fresh prompt.
+    const cards = document.getElementById("resultCards");
+    if (cards) {
+      cards.classList.add("empty");
+      cards.innerHTML =
+        '<div class="result-empty">Run the model to see site potential, market share, and competitor pressure.</div>';
+    }
+    const visitsEl = document.getElementById("visitsValue");
+    const shareEl = document.getElementById("shareValue");
+    if (visitsEl) visitsEl.textContent = "—";
+    if (shareEl) shareEl.textContent = "—";
+    document.querySelectorAll("#visitsBars span").forEach(b => {
+      b.style.height = "30%";
+      b.classList.remove("peak");
+    });
+    const compTable = document.getElementById("competitorTable");
+    if (compTable) {
+      compTable.innerHTML =
+        '<div class="result-empty">Run the model to see competitors.</div>';
+    }
+    if (competitorChart) {
+      competitorChart.destroy();
+      competitorChart = null;
+      document.querySelector(".chart-wrap")?.classList.remove("has-data");
+    }
+
     saveScenarioBtn.disabled = true;
+
+    // 4. Re-render the step-1 chip row and prompt for category.
+    renderInputCard();
     addBotMessage(
-      "Started over. Enter a business category (e.g. 'coffee shop') or a NAICS code to begin again."
+      "Started a new scenario. The map is back to the Worcester overview — " +
+      "pick a category below or type a business label to begin."
     );
   });
 }

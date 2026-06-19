@@ -200,10 +200,36 @@ function showCategoryPois(naics) {
     .catch(err => console.warn("POI overlay unavailable:", err));
 }
 
+function resetMapView() {
+  // Drop candidate pin
+  if (candidateMarker) { candidateMarker.remove(); candidateMarker = null; }
+  candidateLocation = null;
+
+  // Drop competitors (result of the last run) and category POI overlay
+  if (competitorLayer) { competitorLayer.remove(); competitorLayer = null; }
+  if (categoryPoiLayer) { categoryPoiLayer.remove(); categoryPoiLayer = null; }
+
+  // Reset map view to the Worcester service-area bounding box
+  map.fitBounds(
+    [
+      [WORCESTER_BOUNDS.lat_min, WORCESTER_BOUNDS.lon_min],
+      [WORCESTER_BOUNDS.lat_max, WORCESTER_BOUNDS.lon_max],
+    ],
+    { padding: [20, 20] }
+  );
+
+  const sel = document.getElementById("selectedLocation");
+  if (sel) {
+    sel.innerText =
+      "Click anywhere inside the Worcester service area to place a candidate site.";
+  }
+}
+
 // Expose functions so chat.js can call them.
 window.setCandidateLocation = setCandidateLocation;
 window.getCandidateLocation = getCandidateLocation;
 window.plotCompetitors = plotCompetitors;
 window.showCategoryPois = showCategoryPois;
+window.resetMapView = resetMapView;
 window.isInWorcester = isInWorcester;
 window.getWorcesterBounds = () => WORCESTER_BOUNDS;
