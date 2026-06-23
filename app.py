@@ -234,32 +234,32 @@ def dbcheck():
 # Module 7 — Migration & verification endpoints
 # -------------------------
 
-@app.route("/admin/migrate")
-def admin_migrate():
-    """
-    Spawns the SQLite -> Azure SQL migration on a background thread so the
-    request returns immediately (well under Gunicorn's 30s worker timeout
-    and the Azure edge proxy timeout). Re-entry is rejected while a previous
-    run is still active. Poll /admin/migrate/status for progress.
-    """
-    import threading
-    from migrate_to_azure_sql import execute_migration_task, migration_status
+# @app.route("/admin/migrate")
+# def admin_migrate():
+#     """
+#     Spawns the SQLite -> Azure SQL migration on a background thread so the
+#     request returns immediately (well under Gunicorn's 30s worker timeout
+#     and the Azure edge proxy timeout). Re-entry is rejected while a previous
+#     run is still active. Poll /admin/migrate/status for progress.
+#     """
+#     import threading
+#     from migrate_to_azure_sql import execute_migration_task, migration_status
 
-    if migration_status["status"] == "running":
-        return jsonify({
-            "message": "A migration is already running.",
-            "progress_url": "/admin/migrate/status",
-            "current_status": migration_status,
-        }), 202
+#     if migration_status["status"] == "running":
+#         return jsonify({
+#             "message": "A migration is already running.",
+#             "progress_url": "/admin/migrate/status",
+#             "current_status": migration_status,
+#         }), 202
 
-    thread = threading.Thread(target=execute_migration_task, daemon=True)
-    thread.start()
+#     thread = threading.Thread(target=execute_migration_task, daemon=True)
+#     thread.start()
 
-    return jsonify({
-        "ok": True,
-        "message": "Migration started. Poll /admin/migrate/status for progress.",
-        "progress_url": "/admin/migrate/status",
-    }), 202
+#     return jsonify({
+#         "ok": True,
+#         "message": "Migration started. Poll /admin/migrate/status for progress.",
+#         "progress_url": "/admin/migrate/status",
+#     }), 202
 
 
 @app.route("/admin/migrate/status")
