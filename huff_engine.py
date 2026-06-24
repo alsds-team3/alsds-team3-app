@@ -244,6 +244,16 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
         dist_df.groupby("placekey")["uik"].sum().to_dict()
     )
 
+    # Per-competitor market share: a competitor's share of total observed
+    # category visits in Worcester. This is the metric a business owner cares
+    # about ("how big is the nearby competitor in this market?"), not raw
+    # attraction utility. Surfaced in the dashboard table per professor's note.
+    visits_by_placekey = (
+        visits_df.groupby("placekey")["visit_count"].sum().to_dict()
+        if not visits_df.empty else {}
+    )
+    total_category_visits = float(sum(visits_by_placekey.values()))
+
     pois = naics_pois.copy()
     pois["latitude_f"] = pois["latitude"].apply(_safe_float)
     pois["longitude_f"] = pois["longitude"].apply(_safe_float)
@@ -259,12 +269,20 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
     pois = pois.sort_values("distance_m_from_site", na_position="last")
 
     competitors = []
-    for _, comp in pois.head(20).iterrows():
+    # Cap at 10 nearest competitors — the long list cluttered the UI per
+    # professor's feedback. Owner only needs to know about the closest few.
+    for _, comp in pois.head(10).iterrows():
         dist_m = comp.get("distance_m_from_site")
-        attraction = attraction_by_placekey.get(str(comp.get("placekey") or ""))
+        pk = str(comp.get("placekey") or "")
+        attraction = attraction_by_placekey.get(pk)
+        comp_visits = visits_by_placekey.get(pk, 0.0)
+        comp_share = (
+            comp_visits / total_category_visits
+            if total_category_visits > 0 else 0.0
+        )
         competitors.append({
             "name": str(comp.get("location_name", "Unknown") or "Unknown"),
-            "placekey": str(comp.get("placekey", "")),
+            "placekey": pk,
             "lat": _safe_float(comp.get("latitude")),
             "lon": _safe_float(comp.get("longitude")),
             "size": _safe_float(comp.get("wkt_area_sq_meters")),
@@ -276,6 +294,7 @@ def huff(naics, candidate_lon, candidate_lat, floor_area, conn):
                 round(float(attraction), 6)
                 if attraction is not None and pd.notna(attraction) else None
             ),
+            "market_share": round(float(comp_share), 6),
         })
 
     return total_predicted_visits, market_share_proxy, competitors, used_fallback_params

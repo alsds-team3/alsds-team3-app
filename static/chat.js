@@ -256,16 +256,16 @@ if (resetBtn) {
 
     // 3. Clear the result panel + bottom-left mini-cards so old numbers
     //    don't linger next to the fresh prompt.
-    const cards = document.getElementById("resultCards");
-    if (cards) {
-      cards.classList.add("empty");
-      cards.innerHTML =
-        '<div class="result-empty">Run the model to see site potential, market share, and competitor pressure.</div>';
-    }
     const visitsEl = document.getElementById("visitsValue");
     const shareEl = document.getElementById("shareValue");
+    const compEl = document.getElementById("competitorsValue");
+    const runtimeEl = document.getElementById("runtimeValue");
+    const runtimeNote = document.getElementById("runtimeNote");
     if (visitsEl) visitsEl.textContent = "—";
     if (shareEl) shareEl.textContent = "—";
+    if (compEl) compEl.textContent = "—";
+    if (runtimeEl) runtimeEl.textContent = "—";
+    if (runtimeNote) runtimeNote.textContent = "model execution";
     document.querySelectorAll("#visitsBars span").forEach(b => {
       b.style.height = "30%";
       b.classList.remove("peak");
@@ -534,6 +534,10 @@ async function runModel() {
 
   saveScenarioBtn.disabled = false;
 
+  // Flash the "Results ready ▸" pop on the top-right details button so the
+  // user knows where to look for the competitor chart and table.
+  if (window.flashDetailsReady) window.flashDetailsReady();
+
   let tierNote = "";
   if (data.naics_tier === "fallback") {
     tierNote =
@@ -585,27 +589,20 @@ async function askQuestion(question) {
 }
 
 function renderResult(result) {
-  const cards = document.getElementById("resultCards");
-
   const predictedVisits = result.predicted_visits;
   const marketShare = Number(result.market_share);
   const runtime = result.runtime_ms;
   const competitorCount = Array.isArray(result.competitors) ? result.competitors.length : 0;
   const notes = result.notes ?? "";
 
-  cards.classList.remove("empty");
-  cards.innerHTML = `
-    <div class="stat-card accent-amber">
-      <div class="label">Competitors</div>
-      <div class="value">${competitorCount}</div>
-      <div class="sub">nearby in category</div>
-    </div>
-    <div class="stat-card accent-violet">
-      <div class="label">Runtime</div>
-      <div class="value">${formatNumber(runtime)}<span style="font-size:12px;font-weight:500;"> ms</span></div>
-      <div class="sub">${escapeHtml(notes) || "model execution"}</div>
-    </div>
-  `;
+  // Mirror competitor count + runtime into the bottom-left mini cards
+  // (moved here from the advisor pane to reduce chat-pane clutter).
+  const compEl = document.getElementById("competitorsValue");
+  const runtimeEl = document.getElementById("runtimeValue");
+  const runtimeNote = document.getElementById("runtimeNote");
+  if (compEl) compEl.textContent = String(competitorCount);
+  if (runtimeEl) runtimeEl.textContent = formatNumber(runtime);
+  if (runtimeNote) runtimeNote.textContent = notes ? notes.split(".")[0] : "model execution";
 
   // Mirror the headline numbers into the bottom-left glass cards.
   const visitsEl = document.getElementById("visitsValue");
@@ -643,6 +640,9 @@ function renderResult(result) {
     return;
   }
 
+  // Show at most 10 competitors — long lists overwhelmed the panel
+  // per professor's feedback. Engine already caps at 10 nearest.
+  const shownCompetitors = competitors.slice(0, 10);
   tableWrap.innerHTML = `
     <table>
       <thead>
@@ -650,18 +650,23 @@ function renderResult(result) {
           <th>Name</th>
           <th>Distance</th>
           <th>Size</th>
-          <th>Attraction</th>
+          <th>Market share</th>
         </tr>
       </thead>
       <tbody>
-        ${competitors.map(c => `
+        ${shownCompetitors.map(c => {
+          const ms = Number(c.market_share);
+          const msCell = Number.isFinite(ms) && ms > 0
+            ? (ms * 100).toFixed(2) + "%"
+            : "N/A";
+          return `
           <tr>
             <td>${escapeHtml(c.name ?? c.place_name ?? c.poi_name ?? "Unknown")}</td>
             <td>${escapeHtml(c.distance_miles ?? c.distance ?? "N/A")}</td>
             <td>${escapeHtml(c.size ?? c.floor_area ?? c.area ?? "N/A")}</td>
-            <td>${escapeHtml(c.attraction ?? "N/A")}</td>
+            <td>${msCell}</td>
           </tr>
-        `).join("")}
+        `;}).join("")}
       </tbody>
     </table>
   `;
@@ -680,13 +685,16 @@ function renderCompetitorChart(competitors) {
     return;
   }
 
+  // Rank by current market share (visits-based) — what the business owner
+  // wants to know per professor's note. Attraction stays in the result
+  // object for debugging but isn't surfaced in the chart anymore.
   const top = [...competitors]
     .map(c => ({
       name: String(c.name ?? c.place_name ?? c.poi_name ?? "Unknown"),
-      attraction: Number(c.attraction ?? 0)
+      sharePct: Number(c.market_share ?? 0) * 100
     }))
-    .filter(c => Number.isFinite(c.attraction))
-    .sort((a, b) => b.attraction - a.attraction)
+    .filter(c => Number.isFinite(c.sharePct) && c.sharePct > 0)
+    .sort((a, b) => b.sharePct - a.sharePct)
     .slice(0, 10);
 
   if (top.length === 0) {
@@ -702,8 +710,8 @@ function renderCompetitorChart(competitors) {
     data: {
       labels: top.map(t => t.name.length > 22 ? t.name.slice(0, 20) + "…" : t.name),
       datasets: [{
-        label: "Attraction",
-        data: top.map(t => t.attraction),
+        label: "Market share (%)",
+        data: top.map(t => t.sharePct),
         backgroundColor: "#2563eb"
       }]
     },
@@ -711,8 +719,20 @@ function renderCompetitorChart(competitors) {
       indexAxis: "y",
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { x: { beginAtZero: true } }
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.parsed.x.toFixed(2)}% of category visits`
+          }
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: { callback: (v) => v + "%" }
+        }
+      }
     }
   };
 
@@ -726,6 +746,40 @@ function renderCompetitorChart(competitors) {
 
 function saveCurrentScenario() {
   if (!state.last_result || !state.last_inputs) return;
+
+  // Comparison validity rules (from professor's feedback):
+  //   - Saved scenarios MUST share the same NAICS code.
+  //   - Two scenarios may share location OR size, but NOT BOTH (a duplicate
+  //     candidate would just produce the same model output).
+  const candidate = state.last_inputs;
+  const SAME_COORD_EPS = 1e-5; // ~1 meter; treats tiny floating diffs as "same point"
+
+  if (state.scenarios.length > 0) {
+    const baselineNaics = String(state.scenarios[0].inputs.business_category);
+    if (String(candidate.business_category) !== baselineNaics) {
+      addBotMessage(
+        `I can't save this — the existing comparison set is for NAICS ${baselineNaics}, ` +
+        `but this run is NAICS ${candidate.business_category}. ` +
+        `Clear the saved scenarios first, or rerun with NAICS ${baselineNaics}.`
+      );
+      return;
+    }
+
+    const dup = state.scenarios.find(s => {
+      const sameLatLon =
+        Math.abs(s.inputs.candidate_lat - candidate.candidate_lat) < SAME_COORD_EPS &&
+        Math.abs(s.inputs.candidate_lon - candidate.candidate_lon) < SAME_COORD_EPS;
+      const sameArea = Number(s.inputs.floor_area) === Number(candidate.floor_area);
+      return sameLatLon && sameArea;
+    });
+    if (dup) {
+      addBotMessage(
+        "I can't save this — it matches an existing scenario on both location and floor area. " +
+        "Change at least one of them (move the pin, or use a different store size) and save again."
+      );
+      return;
+    }
+  }
 
   state.scenarios.push({
     id: Date.now(),

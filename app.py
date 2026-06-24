@@ -234,39 +234,38 @@ def dbcheck():
 # Module 7 — Migration & verification endpoints
 # -------------------------
 
-@app.route("/admin/migrate")
-def admin_migrate():
-    """
-    Spawns the SQLite -> Azure SQL migration on a background thread so the
-    request returns immediately (well under Gunicorn's 30s worker timeout
-    and the Azure edge proxy timeout). Re-entry is rejected while a previous
-    run is still active. Poll /admin/migrate/status for progress.
-    """
-    import threading
-    from migrate_to_azure_sql import execute_migration_task, migration_status
-
-    if migration_status["status"] == "running":
-        return jsonify({
-            "message": "A migration is already running.",
-            "progress_url": "/admin/migrate/status",
-            "current_status": migration_status,
-        }), 202
-
-    thread = threading.Thread(target=execute_migration_task, daemon=True)
-    thread.start()
-
-    return jsonify({
-        "ok": True,
-        "message": "Migration started. Poll /admin/migrate/status for progress.",
-        "progress_url": "/admin/migrate/status",
-    }), 202
-
-
-@app.route("/admin/migrate/status")
-def admin_migrate_status():
-    """Read-only view of the live migration_status dict updated by the worker."""
-    from migrate_to_azure_sql import migration_status
-    return jsonify(migration_status)
+# NOTE: The /admin/migrate endpoint is intentionally disabled. Per the
+# professor's feedback, leaving a one-click migration trigger live on a
+# production app is unsafe (anyone hitting the URL could re-run the migration).
+# When a migration is actually needed: uncomment the routes below, deploy,
+# trigger the migration, then re-comment and redeploy.
+#
+# @app.route("/admin/migrate")
+# def admin_migrate():
+#     import threading
+#     from migrate_to_azure_sql import execute_migration_task, migration_status
+#
+#     if migration_status["status"] == "running":
+#         return jsonify({
+#             "message": "A migration is already running.",
+#             "progress_url": "/admin/migrate/status",
+#             "current_status": migration_status,
+#         }), 202
+#
+#     thread = threading.Thread(target=execute_migration_task, daemon=True)
+#     thread.start()
+#
+#     return jsonify({
+#         "ok": True,
+#         "message": "Migration started. Poll /admin/migrate/status for progress.",
+#         "progress_url": "/admin/migrate/status",
+#     }), 202
+#
+#
+# @app.route("/admin/migrate/status")
+# def admin_migrate_status():
+#     from migrate_to_azure_sql import migration_status
+#     return jsonify(migration_status)
 
 
 @app.route("/db_structure")
