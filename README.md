@@ -10,7 +10,7 @@ runs a Huff gravity model against the Azure SQL backend to predict monthly
 visits, market share, and competitive pressure — with plain-language
 explanations from Atlas AI (Azure OpenAI / GPT-4o).
 
-Live deployment: see Azure App Service URL in the team submission.
+Live deployment: [see Azure App Service URL in the team submission](https://alsds-team3-app-cye8dsgtfbckdxhd.eastus-01.azurewebsites.net/)
 
 ---
 
