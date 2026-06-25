@@ -992,6 +992,8 @@ body { position: relative; font-size: 14px; line-height: 1.5; }
   .brand-sub { font-size: 9px; letter-spacing: 0.06em; }
   .dock-actions { gap: 6px; flex-shrink: 0; }
   .icon-btn { width: 32px; height: 32px; font-size: 14px; }
+  .save-dock-btn { height: 32px; padding: 0 10px; font-size: 11px; }
+  .save-dock-btn .save-label { display: none; }
 
   /* Hide the desktop left-edge handle — tab bar replaces it. */
   .details-handle { display: none; }
@@ -1144,6 +1146,68 @@ body { position: relative; font-size: 14px; line-height: 1.5; }
   .mini-card .mini-value, .mini-card-compact .mini-value, .growth-value { font-size: 14px; }
   .location-pill { font-size: 11px; padding: 6px 12px; }
   .mobile-tab { padding: 5px 14px; font-size: 11px; }
+}
+
+/* Save-scenario dock button — labeled pill in the header, replaces the old
+   icon-only ＋ circle. Visually quiet when disabled, prominent when active. */
+.save-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(161, 201, 255, 0.3);
+  background: rgba(161, 201, 255, 0.18);
+  color: var(--primary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease, opacity 0.2s ease;
+  white-space: nowrap;
+}
+.save-dock-btn:hover:not(:disabled) {
+  background: rgba(161, 201, 255, 0.32);
+  border-color: rgba(161, 201, 255, 0.55);
+  transform: translateY(-1px);
+}
+.save-dock-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.save-dock-btn .save-icon { font-size: 15px; line-height: 1; }
+
+/* Save-scenario chip — primary action in the quick-chips row after a run.
+   Uses the brand accent gradient so it stands out from grey follow-up chips. */
+.quick-chips .save-chip {
+  background: linear-gradient(135deg, rgba(161, 201, 255, 0.28), rgba(74, 148, 227, 0.38));
+  border: 1px solid rgba(161, 201, 255, 0.45);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+.quick-chips .save-chip:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(161, 201, 255, 0.42), rgba(74, 148, 227, 0.55));
+  border-color: rgba(161, 201, 255, 0.7);
+  transform: translateY(-1px);
+}
+.quick-chips .save-chip.saved {
+  background: rgba(134, 239, 172, 0.15);
+  border-color: rgba(134, 239, 172, 0.35);
+  color: #86efac;
+  font-weight: 600;
+  cursor: default;
+}
+.quick-chips .save-chip.mismatch {
+  background: rgba(255, 180, 171, 0.1);
+  border: 1px dashed rgba(255, 180, 171, 0.35);
+  color: var(--on-surface-variant);
+  font-weight: 500;
+  cursor: not-allowed;
+  font-size: 11px;
 }
 
 /* Confirm-step chip emphasis — the green "Confirm & run" stands out so the

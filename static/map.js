@@ -104,8 +104,7 @@ map.on("click", function (event) {
     const sel = document.getElementById("selectedLocation");
     if (sel) {
       sel.innerText =
-        `That point (${lat.toFixed(6)}, ${lon.toFixed(6)}) is outside the Worcester service area. ` +
-        "Pick a spot inside the green dashed box.";
+        "That spot is outside the Worcester service area. Pick a location inside the green dashed box.";
     }
     return;
   }
@@ -128,8 +127,11 @@ function setCandidateLocation(lat, lon, notifyChat = false) {
 
   candidateMarker.openPopup();
 
+  const locName = window.getLocationName
+    ? window.getLocationName(candidateLocation.lat, candidateLocation.lon)
+    : `Worcester (${candidateLocation.lat.toFixed(4)}, ${candidateLocation.lon.toFixed(4)})`;
   document.getElementById("selectedLocation").innerText =
-    `Selected candidate location: ${candidateLocation.lat.toFixed(6)}, ${candidateLocation.lon.toFixed(6)}`;
+    `Proposed store location: ${locName}`;
 
   map.setView([candidateLocation.lat, candidateLocation.lon], 14);
 
@@ -234,7 +236,7 @@ function resetMapView() {
   const sel = document.getElementById("selectedLocation");
   if (sel) {
     sel.innerText =
-      "Click anywhere inside the Worcester service area to place a candidate site.";
+      "Click anywhere on the map to place your proposed store location.";
   }
 }
 

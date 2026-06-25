@@ -41,14 +41,16 @@
     <select id="categorySelect" hidden></select>
 
     <div class="dock-actions">
-      <button id="aboutBtn" type="button" class="icon-btn" title="About locationIQ">ⓘ</button>
-      <button id="saveScenarioBtn" type="button" class="icon-btn accent" title="Save scenario" disabled>＋</button>
+      <button id="aboutBtn" type="button" class="icon-btn" title="About locationIQ" aria-label="About locationIQ">ⓘ</button>
+      <button id="saveScenarioBtn" type="button" class="save-dock-btn" title="Save this scenario for comparison" disabled aria-label="Save scenario">
+        <span class="save-icon">⊕</span><span class="save-label">Save</span>
+      </button>
     </div>
   </header>
 
   <!-- Floating location pill (top-center) -->
   <div id="selectedLocation" class="location-pill glass">
-    Click anywhere inside the Worcester service area to place a candidate site.
+    Click anywhere on the map to place your proposed store location.
   </div>
 
   <!-- Left-edge details handle. Always visible, replaces the easy-to-miss
@@ -236,15 +238,18 @@
       const drawer = document.getElementById("detailsDrawer");
       const detailsBtn = document.getElementById("detailsBtn");
       const detailsBadge = document.getElementById("detailsBadge");
+      const bottomStack = document.querySelector(".bottom-stack");
       const open = () => {
         drawer.removeAttribute("hidden");
         if (detailsBadge) detailsBadge.setAttribute("hidden", "");
         detailsBtn.classList.remove("attention");
         detailsBtn.style.display = "none";
+        if (bottomStack) bottomStack.style.display = "none";
       };
       const close = () => {
         drawer.setAttribute("hidden", "");
         detailsBtn.style.display = "";
+        if (bottomStack) bottomStack.style.display = "";
       };
       detailsBtn.addEventListener("click", () => {
         drawer.hasAttribute("hidden") ? open() : close();

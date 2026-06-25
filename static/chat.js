@@ -23,9 +23,37 @@ let CATEGORIES_LIST = [];
 
 const quickChips = document.getElementById("quickChips");
 
+function getCategoryLabel(naicsCode) {
+  const cat = CATEGORIES_LIST.find(c => c.naics === String(naicsCode));
+  return cat ? cat.label : (state.business_category_label || `Category ${naicsCode}`);
+}
+
+const WORCESTER_AREAS = [
+  { label: "Downtown Worcester",  lat: 42.2626, lon: -71.8023, r: 0.008 },
+  { label: "Tatnuck Square",      lat: 42.2735, lon: -71.8330, r: 0.008 },
+  { label: "Lincoln St area",     lat: 42.2900, lon: -71.8050, r: 0.008 },
+  { label: "Shrewsbury St area",  lat: 42.2680, lon: -71.7900, r: 0.008 },
+  { label: "Main South",          lat: 42.2500, lon: -71.8060, r: 0.008 },
+  { label: "Greendale",           lat: 42.2850, lon: -71.8250, r: 0.008 },
+  { label: "Burncoat",            lat: 42.2950, lon: -71.7750, r: 0.008 },
+  { label: "Webster Square",      lat: 42.2430, lon: -71.8150, r: 0.008 },
+  { label: "Canal District",      lat: 42.2590, lon: -71.7970, r: 0.006 },
+  { label: "College Hill",        lat: 42.2510, lon: -71.8100, r: 0.006 },
+];
+
+function getLocationName(lat, lon) {
+  for (const area of WORCESTER_AREAS) {
+    if (Math.abs(lat - area.lat) < area.r && Math.abs(lon - area.lon) < area.r) {
+      return area.label;
+    }
+  }
+  return `Worcester (${lat.toFixed(4)}, ${lon.toFixed(4)})`;
+}
+window.getLocationName = getLocationName;
+
 addBotMessage(
-  "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
-  "Pick a category below, type a label like 'liquor store', or enter a calibrated NAICS code."
+  "Welcome! I'll help you evaluate a store location in Worcester, MA. " +
+  "Start by picking a business type below, or type one like 'liquor store' or 'bakery'."
 );
 
 // -------------------------------------------------------------------------
@@ -33,11 +61,11 @@ addBotMessage(
 // change with state.step so the user always sees the next-best action.
 // -------------------------------------------------------------------------
 const PLACEHOLDERS = {
-  category: "Type a category, NAICS code, or pick a chip…",
-  location: "Type 42.26, -71.80 — or click anywhere on the map",
-  floor_area: "Enter floor area in m² (e.g. 1000)",
+  category: "Type a business type like 'bakery' or pick below…",
+  location: "Click the map or type coordinates like 42.26, -71.80",
+  floor_area: "Enter your store size in square meters (e.g. 1000)",
   confirm: "Type 'yes' to run, or edit any input below",
-  ready: "Ask about site feasibility, compare scenarios…",
+  ready: "Ask a question about this location…",
 };
 
 const POPULAR_CATS = ["4441", "311811", "445310", "447110"]; // hardware, bakery, liquor, gas
@@ -109,11 +137,48 @@ function renderQuickChips() {
     `;
   } else {
     // ready — follow-up actions only
+    const alreadySaved = state.last_inputs && state.scenarios.some(s =>
+      s.inputs.candidate_lat === state.last_inputs.candidate_lat &&
+      s.inputs.candidate_lon === state.last_inputs.candidate_lon &&
+      Number(s.inputs.floor_area) === Number(state.last_inputs.floor_area) &&
+      s.inputs.business_category === state.last_inputs.business_category
+    );
+
+    const naicsMismatch = state.scenarios.length > 0 && state.last_inputs &&
+      String(state.scenarios[0].inputs.business_category) !== String(state.last_inputs.business_category);
+
+    let saveLabel, saveClass, saveDisabled;
+    if (alreadySaved) {
+      saveLabel = "✓ Saved";
+      saveClass = "save-chip saved";
+      saveDisabled = true;
+    } else if (naicsMismatch) {
+      saveLabel = "Different business type";
+      saveClass = "save-chip mismatch";
+      saveDisabled = true;
+    } else {
+      saveLabel = "⊕ Save this scenario";
+      saveClass = "save-chip";
+      saveDisabled = false;
+    }
+
     quickChips.innerHTML = `
-      <button type="button" data-send="Compare the saved scenarios">Compare</button>
+      <button type="button" class="${saveClass}" id="chipSaveScenario"
+              ${saveDisabled ? "disabled" : ""}
+              ${naicsMismatch ? `title="Clear saved scenarios first, or switch back to ${getCategoryLabel(state.scenarios[0].inputs.business_category)}"` : ""}>
+        ${saveLabel}
+      </button>
+      <button type="button" data-send="Compare the saved scenarios">Compare${state.scenarios.length >= 2 ? ` (${state.scenarios.length})` : ""}</button>
       <button type="button" data-send="What are the main competitors?">Competitors</button>
       <button type="button" data-send="What are the limitations of this result?">Limitations</button>
     `;
+    const saveChip = document.getElementById("chipSaveScenario");
+    if (saveChip && !saveDisabled) {
+      saveChip.addEventListener("click", () => {
+        saveCurrentScenario();
+        renderQuickChips();
+      });
+    }
   }
 
   quickChips.querySelectorAll("button[data-send]").forEach(btn => {
@@ -304,8 +369,8 @@ if (resetBtn) {
     // 4. Re-render the step-1 chip row and prompt for category.
     renderInputCard();
     addBotMessage(
-      "Started a new scenario. The map is back to the Worcester overview — " +
-      "pick a category below or type a business label to begin."
+      "Starting fresh! The map is back to the Worcester overview — " +
+      "pick a business type below to begin a new check."
     );
   });
 }
@@ -322,8 +387,8 @@ window.onMapLocationSelected = function (location) {
 
   if (state.step === "location") {
     addBotMessage(
-      `Great, I captured the candidate location: ${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}. ` +
-      "Now enter the proposed store floor area in square meters."
+      `Great, location set to ${getLocationName(location.lat, location.lon)}. ` +
+      "Now enter your proposed store size in square meters."
     );
     state.step = "floor_area";
     renderInputCard();
@@ -335,8 +400,8 @@ window.onMapLocationSelected = function (location) {
   // explore alternative sites without re-typing everything.
   if (state.step === "ready" && state.business_category && state.floor_area) {
     addBotMessage(
-      `New candidate location captured: ${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}. ` +
-      `Rerunning the model with NAICS ${state.business_category} and floor area ${state.floor_area} m².`
+      `New location: ${getLocationName(location.lat, location.lon)}. ` +
+      `Rerunning for ${getCategoryLabel(state.business_category)} with ${formatNumber(state.floor_area)} m² store.`
     );
     runModel().catch(err => addErrorMessage(friendlyError(err.message || String(err))));
   }
@@ -391,11 +456,10 @@ async function handleSend() {
 
       if (!resolved) {
         const cats = (window.getCalibratedCategories || (() => []))();
-        const sample = cats.slice(0, 8).map(c => `${c.label} (${c.naics})`).join(", ");
+        const sample = cats.slice(0, 6).map(c => c.label).join(", ");
         addBotMessage(
-          "I can only run the model for categories that have calibrated " +
-          "parameters in our dataset. Pick one from the dropdown, or try a label like: " +
-          sample + (cats.length > 8 ? ", …" : "") + "."
+          "I don't recognize that business type. Try picking one from the list below, " +
+          "or type a name like: " + sample + (cats.length > 6 ? ", …" : "") + "."
         );
         return;
       }
@@ -409,12 +473,10 @@ async function handleSend() {
         window.showCategoryPois(resolved);
       }
 
-      const wasMapped = !/^\d{2,6}$/.test(text.trim());
+      const catLabel = getCategoryLabel(resolved);
       addBotMessage(
-        (wasMapped
-          ? `I mapped "${text}" to NAICS ${resolved}. `
-          : `Using NAICS ${resolved}. `) +
-        "Now click the proposed store location on the map, or type coordinates as: 42.24, -71.78"
+        `Got it — ${catLabel}. ` +
+        "Now click your proposed store location on the map, or type coordinates like: 42.24, -71.78"
       );
       return;
     }
@@ -428,11 +490,9 @@ async function handleSend() {
       }
 
       if (window.isInWorcester && !window.isInWorcester(coords.lat, coords.lon)) {
-        const b = window.getWorcesterBounds ? window.getWorcesterBounds() : null;
         addBotMessage(
-          `That point is outside the Worcester service area${b
-            ? ` (lat ${b.lat_min}–${b.lat_max}, lon ${b.lon_min}–${b.lon_max})`
-            : ""}. Please pick a location inside the green dashed box on the map.`
+          "That point is outside the Worcester service area. " +
+          "Please pick a location inside the green dashed box on the map."
         );
         return;
       }
@@ -446,7 +506,7 @@ async function handleSend() {
 
       state.step = "floor_area";
       renderInputCard();
-      addBotMessage("Great. Now enter the proposed store floor area in square meters.");
+      addBotMessage(`Location set to ${getLocationName(coords.lat, coords.lon)}. Now enter your proposed store size in square meters.`);
       return;
     }
 
@@ -473,8 +533,8 @@ async function handleSend() {
         const tier = window.naicsTier ? window.naicsTier(state.business_category) : "calibrated";
         if (tier === "unknown") {
           addBotMessage(
-            `There are no historical records for NAICS ${state.business_category} in our ` +
-            "Worcester dataset, so the model cannot produce results. Pick a different category."
+            `We don't have enough data for ${getCategoryLabel(state.business_category)} in our ` +
+            "Worcester dataset to produce results. Please pick a different business type."
           );
           state.step = "category";
           renderInputCard();
@@ -482,7 +542,7 @@ async function handleSend() {
         }
         if (tier === "fallback") {
           addBotMessage(
-            `Quick note: we have fewer past examples for business category ${state.business_category}, ` +
+            `Quick note: we have fewer past examples for ${getCategoryLabel(state.business_category)}, ` +
             "so treat the result as a rough estimate."
           );
         }
@@ -557,9 +617,9 @@ async function rerunModelFromMessage(inputs) {
   if (window.showCategoryPois) window.showCategoryPois(state.business_category);
 
   addBotMessage(
-    `I found a complete new site to check. I will use business category ${state.business_category}, ` +
-    `the location (${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}), ` +
-    `and a ${formatNumber(state.floor_area)} square meter space.`
+    `I found a complete new site to check: ${getCategoryLabel(state.business_category)} ` +
+    `at ${getLocationName(state.candidate_lat, state.candidate_lon)}, ` +
+    `${formatNumber(state.floor_area)} m² store.`
   );
 
   if (window.setCandidateLocation) {
@@ -570,15 +630,14 @@ async function rerunModelFromMessage(inputs) {
 }
 
 function promptConfirmation() {
-  const label = state.business_category_label
-    ? `${state.business_category_label} (NAICS ${state.business_category})`
-    : `NAICS ${state.business_category}`;
+  const label = getCategoryLabel(state.business_category);
+  const location = getLocationName(state.candidate_lat, state.candidate_lon);
   addBotMessage(
-    "Please review your inputs before I run the model:\n" +
-    `  • Business: ${label}\n` +
-    `  • Location: ${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}\n` +
-    `  • Floor area: ${formatNumber(state.floor_area)} m²\n\n` +
-    "Tap ✓ Confirm & run to start, or any Edit chip to change one input."
+    "Here's what I'll check:\n" +
+    `  • Business type: ${label}\n` +
+    `  • Location: ${location}\n` +
+    `  • Store size: ${formatNumber(state.floor_area)} m²\n\n` +
+    "Tap ✓ Confirm & run to start, or any Edit chip to change one."
   );
 }
 
@@ -589,8 +648,8 @@ async function runModel() {
   const tier = window.naicsTier ? window.naicsTier(state.business_category) : "calibrated";
   if (tier === "unknown") {
     addBotMessage(
-      `There are no historical records for NAICS ${state.business_category} in our ` +
-      "Worcester dataset, so the model cannot produce results. Pick a different category."
+      `We don't have enough data for ${getCategoryLabel(state.business_category)} in our ` +
+      "Worcester dataset to produce results. Please pick a different business type."
     );
     state.step = "category";
     renderInputCard();
@@ -599,23 +658,38 @@ async function runModel() {
 
   addBotMessage("Checking this location now...");
 
-  const response = await fetch("/api/run_huff", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      candidate_lat: state.candidate_lat,
-      candidate_lon: state.candidate_lon,
-      business_category: state.business_category,
-      floor_area: state.floor_area,
-      naics_code: state.business_category,
-      floor_area_sqm: state.floor_area
-    })
-  });
-
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-    throw new Error(friendlyError(data.error || "Model failed."));
+  const MAX_RETRIES = 2;
+  let response, data;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      response = await fetch("/api/run_huff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidate_lat: state.candidate_lat,
+          candidate_lon: state.candidate_lon,
+          business_category: state.business_category,
+          floor_area: state.floor_area,
+          naics_code: state.business_category,
+          floor_area_sqm: state.floor_area
+        })
+      });
+      data = await response.json();
+      if (response.ok && data.ok) break;
+      if (attempt < MAX_RETRIES) {
+        addBotMessage(`Something went wrong — retrying (attempt ${attempt + 2} of ${MAX_RETRIES + 1})…`);
+        await new Promise(r => setTimeout(r, 1500));
+      } else {
+        throw new Error(friendlyError(data.error || "Model failed."));
+      }
+    } catch (err) {
+      if (attempt < MAX_RETRIES && err.name !== "Error") {
+        addBotMessage(`Connection issue — retrying (attempt ${attempt + 2} of ${MAX_RETRIES + 1})…`);
+        await new Promise(r => setTimeout(r, 1500));
+      } else {
+        throw err;
+      }
+    }
   }
 
   state.last_result = data.result;
@@ -643,17 +717,10 @@ async function runModel() {
   const realWorldSummary = buildPlainResultSummary(data.result);
   data.explanation = realWorldSummary + (data.explanation ? "\n\n" + data.explanation : "");
 
-  let tierNote = "";
-  if (data.naics_tier === "fallback") {
-    tierNote =
-      `⚠ NAICS ${state.business_category} is not calibrated. The engine used ` +
-      "default parameters (α=1, β=2) — treat these numbers as a rough estimate.\n\n";
-  }
-
   addBotMessage(
     (data.naics_tier === "fallback"
-      ? `A quick note: we have fewer past examples for business category ${state.business_category}, so treat this as a rough estimate rather than a final answer.\n\n`
-      : tierNote) +
+      ? `A quick note: we have fewer past examples for ${getCategoryLabel(state.business_category)}, so treat this as a rough estimate rather than a final answer.\n\n`
+      : "") +
     (data.explanation ? data.explanation + "\n\n" : "") +
     "Next, you can ask what this means, compare a saved site, click a new spot on the map, " +
     "or change the business type, location, or store size."
@@ -706,30 +773,43 @@ function buildPlainResultSummary(result) {
 
 async function askQuestion(question) {
   if (!state.last_result) {
-    addBotMessage("Please complete a model run first.");
+    addBotMessage("Please run a site check first before asking questions.");
     return;
   }
 
-  const response = await fetch("/api/ask", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      question,
-      result: state.last_result,
-      inputs: state.last_inputs,
-      history: state.history.slice(-10),
-      scenarios: state.scenarios.map(s => ({
-        inputs: s.inputs,
-        predicted_visits: s.result.predicted_visits,
-        market_share: s.result.market_share
-      }))
-    })
-  });
-
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-    throw new Error(data.error || "The assistant could not answer.");
+  const MAX_RETRIES = 2;
+  let response, data;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      response = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          result: state.last_result,
+          inputs: state.last_inputs,
+          history: state.history.slice(-10),
+          scenarios: state.scenarios.map(s => ({
+            inputs: s.inputs,
+            predicted_visits: s.result.predicted_visits,
+            market_share: s.result.market_share
+          }))
+        })
+      });
+      data = await response.json();
+      if (response.ok && data.ok) break;
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, 1500));
+      } else {
+        throw new Error(data.error || "The assistant could not answer.");
+      }
+    } catch (err) {
+      if (attempt < MAX_RETRIES && err.name !== "Error") {
+        await new Promise(r => setTimeout(r, 1500));
+      } else {
+        throw err;
+      }
+    }
   }
 
   state.history.push({ role: "user", content: question });
@@ -908,9 +988,9 @@ function saveCurrentScenario() {
     const baselineNaics = String(state.scenarios[0].inputs.business_category);
     if (String(candidate.business_category) !== baselineNaics) {
       addBotMessage(
-        `I can't save this — the existing comparison set is for NAICS ${baselineNaics}, ` +
-        `but this run is NAICS ${candidate.business_category}. ` +
-        `Clear the saved scenarios first, or rerun with NAICS ${baselineNaics}.`
+        `I can't save this — the existing comparison is for ${getCategoryLabel(baselineNaics)}, ` +
+        `but this run is ${getCategoryLabel(candidate.business_category)}. ` +
+        `Clear the saved scenarios first, or switch back to ${getCategoryLabel(baselineNaics)}.`
       );
       return;
     }
@@ -938,7 +1018,28 @@ function saveCurrentScenario() {
   });
 
   renderScenarios();
-  addBotMessage(`Saved scenario #${state.scenarios.length}. Run another to compare side-by-side.`);
+
+  const loc = getLocationName(candidate.candidate_lat, candidate.candidate_lon);
+  const cat = getCategoryLabel(candidate.business_category);
+  addBotMessage(
+    `✓ Saved as Scenario #${state.scenarios.length} (${cat} at ${loc}). ` +
+    (state.scenarios.length === 1
+      ? "Run a second location to compare side-by-side."
+      : `You now have ${state.scenarios.length} scenarios — tap Compare to see them.`)
+  );
+
+  // Brief flash on the dock save button to confirm the action visually.
+  const dockBtn = document.getElementById("saveScenarioBtn");
+  if (dockBtn) {
+    dockBtn.style.background = "rgba(134, 239, 172, 0.35)";
+    dockBtn.style.borderColor = "rgba(134, 239, 172, 0.6)";
+    dockBtn.querySelector(".save-icon").textContent = "✓";
+    setTimeout(() => {
+      dockBtn.style.background = "";
+      dockBtn.style.borderColor = "";
+      dockBtn.querySelector(".save-icon").textContent = "⊕";
+    }, 1500);
+  }
 }
 
 function clearScenarios() {
@@ -976,8 +1077,8 @@ function renderScenarios() {
         <button class="remove" data-id="${s.id}" title="Remove">&times;</button>
         ${isBest ? '<span class="badge">Most customers</span>' : ""}
         <h4>Scenario #${i + 1}</h4>
-        <div class="row"><span class="k">Business Type</span><span class="v">${escapeHtml(s.inputs.business_category)}</span></div>
-        <div class="row"><span class="k">Location</span><span class="v">${s.inputs.candidate_lat.toFixed(4)}, ${s.inputs.candidate_lon.toFixed(4)}</span></div>
+        <div class="row"><span class="k">Business Type</span><span class="v">${escapeHtml(getCategoryLabel(s.inputs.business_category))}</span></div>
+        <div class="row"><span class="k">Location</span><span class="v">${escapeHtml(getLocationName(s.inputs.candidate_lat, s.inputs.candidate_lon))}</span></div>
         <div class="row"><span class="k">Store Size</span><span class="v">${formatNumber(s.inputs.floor_area)} m²</span></div>
         <div class="row"><span class="k">Expected Customers</span><span class="v">${formatNumber(v)}/mo</span></div>
         <div class="row"><span class="k">Your Share</span><span class="v">${Number.isFinite(ms) ? (ms * 100).toFixed(2) + "%" : "N/A"}</span></div>
@@ -1124,7 +1225,7 @@ async function applyPartialUpdate(update) {
 
   if (update.business_category && update.business_category !== state.business_category) {
     state.business_category = update.business_category;
-    changes.push(`NAICS → ${update.business_category}`);
+    changes.push(`business type → ${getCategoryLabel(update.business_category)}`);
     if (window.showCategoryPois) window.showCategoryPois(update.business_category);
   }
 
@@ -1143,13 +1244,13 @@ async function applyPartialUpdate(update) {
       if (window.setCandidateLocation) {
         window.setCandidateLocation(state.candidate_lat, state.candidate_lon, false);
       }
-      changes.push(`location → ${update.candidate_lat.toFixed(4)}, ${update.candidate_lon.toFixed(4)}`);
+      changes.push(`location → ${getLocationName(update.candidate_lat, update.candidate_lon)}`);
     }
   }
 
   if (update.floor_area && update.floor_area !== state.floor_area) {
     state.floor_area = update.floor_area;
-    changes.push(`floor area → ${update.floor_area} m²`);
+    changes.push(`store size → ${update.floor_area} m²`);
   }
 
   if (changes.length === 0) {
