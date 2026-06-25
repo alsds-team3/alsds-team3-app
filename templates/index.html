@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>ALSDS · Worcester Venture Map</title>
+  <title>locationIQ · Worcester Venture Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -28,7 +28,7 @@
     <div class="brand">
       <div class="brand-mark">◈</div>
       <div class="brand-text">
-        <div class="brand-title">Team 3 · ALSDS</div>
+        <div class="brand-title">locationIQ</div>
         <div class="brand-sub">Worcester Venture Map</div>
       </div>
     </div>
@@ -41,12 +41,8 @@
     <select id="categorySelect" hidden></select>
 
     <div class="dock-actions">
-      <button id="aboutBtn" type="button" class="icon-btn" title="About Team 3">ⓘ</button>
+      <button id="aboutBtn" type="button" class="icon-btn" title="About locationIQ">ⓘ</button>
       <button id="saveScenarioBtn" type="button" class="icon-btn accent" title="Save scenario" disabled>＋</button>
-      <button id="detailsBtn" type="button" class="icon-btn" title="Toggle competitor details">
-        ▤
-        <span id="detailsBadge" class="details-badge" hidden>Results ready ▸</span>
-      </button>
     </div>
   </header>
 
@@ -55,12 +51,55 @@
     Click anywhere inside the Worcester service area to place a candidate site.
   </div>
 
+  <!-- Left-edge details handle. Always visible, replaces the easy-to-miss
+       icon button in the top dock. Pulses with a "Results ready" label
+       when chat.js calls flashDetailsReady() after a model run. -->
+  <button id="detailsBtn" type="button" class="details-handle glass" title="Open competitor & scenario details">
+    <span class="handle-icon">▤</span>
+    <span class="handle-label">Details</span>
+    <span id="detailsBadge" class="handle-badge" hidden>Results&nbsp;ready</span>
+  </button>
+
+  <!-- Mobile tab bar. Hidden on ≥860px wide screens via CSS; on mobile it
+       switches between Map / Details / Chat panes (only one shown at a time)
+       so nothing overlaps. -->
+  <!-- Mobile split-screen tabs. Map is always visible in the top half; this
+       bar sits at the seam, right-aligned against the chat/details sheet,
+       and toggles only the bottom half. Icons only on mobile (label-less). -->
+  <nav class="mobile-tabs glass" id="mobileTabs" aria-label="Bottom-pane tabs">
+    <button type="button" class="mobile-tab active" data-pane="chat" title="Chat" aria-label="Show chat">
+      <span class="tab-icon" aria-hidden="true">
+        <!-- icons8 material-outlined "speech-bubble-with-dots" — inlined as SVG -->
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>
+          <circle cx="8.5" cy="12" r="0.8" fill="currentColor" stroke="none"/>
+          <circle cx="12"  cy="12" r="0.8" fill="currentColor" stroke="none"/>
+          <circle cx="15.5" cy="12" r="0.8" fill="currentColor" stroke="none"/>
+        </svg>
+      </span><span class="tab-label">Chat</span>
+    </button>
+    <button type="button" class="mobile-tab" data-pane="details" title="Details" aria-label="Show details">
+      <span class="tab-icon" aria-hidden="true">
+        <!-- icons8 ios-filled "bulleted-list" — inlined as SVG -->
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+          <circle cx="4" cy="6"  r="1.5"/>
+          <circle cx="4" cy="12" r="1.5"/>
+          <circle cx="4" cy="18" r="1.5"/>
+          <rect x="8.5" y="5"  width="12" height="2" rx="1"/>
+          <rect x="8.5" y="11" width="12" height="2" rx="1"/>
+          <rect x="8.5" y="17" width="12" height="2" rx="1"/>
+        </svg>
+      </span><span class="tab-label">Details</span>
+    </button>
+  </nav>
+
   <!-- Right-side chat / advisor panel -->
   <aside class="advisor-panel glass" id="advisorPanel">
     <header class="advisor-head">
       <div class="advisor-icon">✦</div>
       <div>
-        <div class="advisor-title">Atlas AI · Huff Advisor</div>
+        <div class="advisor-title">locationIQ Advisor</div>
         <div class="advisor-sub">Analyzing location feasibility…</div>
       </div>
     </header>
@@ -88,8 +127,8 @@
   <section class="bottom-stack">
     <div class="stack-row">
       <div class="glass mini-card primary-card" id="visitsCard">
-        <div class="mini-label">Predicted Visits</div>
-        <div class="mini-value"><span id="visitsValue">—</span><span class="mini-unit">/mo</span></div>
+        <div class="mini-label">Expected Customers</div>
+        <div class="mini-value"><span id="visitsValue">—</span><span class="mini-unit">/month</span></div>
         <div class="mini-bars" id="visitsBars">
           <span></span><span></span><span></span><span></span><span></span><span></span>
         </div>
@@ -98,27 +137,27 @@
       <div class="glass mini-card growth-card" id="shareCard">
         <div class="growth-icon">↗</div>
         <div class="growth-value" id="shareValue">—</div>
-        <div class="growth-label">Market Share</div>
+        <div class="growth-label">Your Share of Nearby Demand</div>
       </div>
 
       <div class="glass mini-card mini-card-compact" id="competitorsCard">
-        <div class="mini-label">Competitors</div>
+        <div class="mini-label">Nearby Competitors</div>
         <div class="mini-value mini-value-sm"><span id="competitorsValue">—</span></div>
-        <div class="mini-foot">nearby in category</div>
+        <div class="mini-foot">similar businesses nearby</div>
       </div>
 
       <div class="glass mini-card mini-card-compact" id="runtimeCard">
-        <div class="mini-label">Runtime</div>
+        <div class="mini-label">Analysis</div>
         <div class="mini-value mini-value-sm"><span id="runtimeValue">—</span><span class="mini-unit">ms</span></div>
-        <div class="mini-foot" id="runtimeNote">model execution</div>
+        <div class="mini-foot" id="runtimeNote">processing time</div>
       </div>
     </div>
 
     <div class="glass layer-pill">
       <div class="layer-icon">◇</div>
       <div>
-        <div class="layer-title">Demand Grid Active</div>
-        <div class="layer-sub" id="layerSub">CBG centroids streamed from Azure SQL</div>
+        <div class="layer-title">Local Demand Layer</div>
+        <div class="layer-sub" id="layerSub">Worcester customer areas loaded</div>
       </div>
     </div>
   </section>
@@ -126,19 +165,19 @@
   <!-- Slide-in details drawer (competitor chart, table, scenario comparison) -->
   <aside class="details-drawer glass" id="detailsDrawer" hidden>
     <header class="drawer-head">
-      <h2>Competitor & Scenario Detail</h2>
+      <h2>Competition & Comparison</h2>
       <button id="closeDetailsBtn" class="icon-btn" title="Close">✕</button>
     </header>
 
-    <h3>Competitor Market Share</h3>
+    <h3>Who You're Competing With</h3>
     <div class="chart-wrap">
       <canvas id="competitorChart" height="160"></canvas>
-      <div id="chartEmpty" class="chart-empty">No competitor data yet.</div>
+      <div id="chartEmpty" class="chart-empty">Run a site check to see who you're up against.</div>
     </div>
 
-    <h3>Nearby Competitors</h3>
+    <h3>Similar Businesses Nearby</h3>
     <div id="competitorTable" class="table-wrap">
-      <div class="result-empty">Run the model to see competitors.</div>
+      <div class="result-empty">Pick a location and run a check to see similar businesses nearby.</div>
     </div>
 
     <div class="drawer-section-head">
@@ -157,19 +196,19 @@
   <div id="aboutModal" class="modal-backdrop" hidden>
     <div class="glass modal-card">
       <header class="modal-head">
-        <h2>About Team 3</h2>
+        <h2>About locationIQ</h2>
         <button id="closeAboutBtn" class="icon-btn" title="Close">✕</button>
       </header>
       <div class="modal-body">
         <p>
-          <strong>ALSDS — AI-Assisted Location Decision Support System</strong> is a
-          Worcester-focused site feasibility tool built by Team 3 for the Urban
+          <strong>locationIQ — AI-Assisted Location Decision Support System</strong>
+          is a Worcester-focused site-feasibility tool built for the Urban
           Analytics AI Consultancy capstone.
         </p>
         <p>
           We combine an Azure SQL backend of Worcester POIs, CBG centroids, and
-          calibrated Huff parameters with an Azure OpenAI advisor (Atlas AI)
-          that runs the gravity model, compares candidate sites, and explains
+          local business data with the locationIQ advisor
+          that checks each site, compares candidate locations, and explains
           results in plain language for non-technical owners.
         </p>
         <h3>What you can do</h3>
@@ -199,11 +238,14 @@
       const detailsBadge = document.getElementById("detailsBadge");
       const open = () => {
         drawer.removeAttribute("hidden");
-        // First open dismisses the "Results ready ▸" attention badge.
         if (detailsBadge) detailsBadge.setAttribute("hidden", "");
         detailsBtn.classList.remove("attention");
+        detailsBtn.style.display = "none";
       };
-      const close = () => drawer.setAttribute("hidden", "");
+      const close = () => {
+        drawer.setAttribute("hidden", "");
+        detailsBtn.style.display = "";
+      };
       detailsBtn.addEventListener("click", () => {
         drawer.hasAttribute("hidden") ? open() : close();
       });
@@ -215,6 +257,31 @@
         detailsBadge.removeAttribute("hidden");
         detailsBtn.classList.add("attention");
       };
+
+      // Mobile tab bar — switches between map / details / chat panes so they
+      // never overlap on narrow viewports. CSS hides the bar on desktop.
+      const mobileTabs = document.getElementById("mobileTabs");
+      const advisor = document.getElementById("advisorPanel");
+      const setPane = (pane) => {
+        document.body.dataset.mobilePane = pane;
+        mobileTabs.querySelectorAll(".mobile-tab").forEach(t => {
+          t.classList.toggle("active", t.dataset.pane === pane);
+        });
+        if (pane === "details") drawer.removeAttribute("hidden");
+        // Tell Leaflet its container resized so tiles repaint instead of
+        // showing a blank dark area (the split-screen swap changes the map
+        // height by a small amount on some breakpoints).
+        if (window.invalidateMapSize) {
+          requestAnimationFrame(() => window.invalidateMapSize());
+        }
+      };
+      mobileTabs.addEventListener("click", (e) => {
+        const t = e.target.closest(".mobile-tab");
+        if (t) setPane(t.dataset.pane);
+      });
+      // Split screen on mobile: map locked to top half, bottom half defaults
+      // to chat (the most-used pane). Tab can swap it to details.
+      document.body.dataset.mobilePane = "chat";
 
       // About modal
       const aboutModal = document.getElementById("aboutModal");

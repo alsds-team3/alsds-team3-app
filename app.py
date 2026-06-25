@@ -573,19 +573,17 @@ def safe_competitor_sample(result, n=3):
 
 def generate_explanation(result):
     prompt = f"""
-A location model has just produced these results for a proposed Worcester store:
+A site-check tool has just produced these results for a proposed Worcester store:
 
 Predicted visits: {result.get("predicted_visits")}
 Market share: {result.get("market_share")}
-Runtime (ms): {result.get("runtime_ms")}
-
 Competitors (sample):
 {safe_competitor_sample(result, 3)}
 
-In 3-4 short sentences, plain language only (no jargon, no academic phrasing):
-1. State the predicted visits and market share in one sentence.
-2. Say in plain terms why this site likely scored that way (e.g. nearby competitors, distance to demand).
-3. Mention one important limitation (the model ignores rent, parking, visibility, zoning, demographics).
+In 3 short sentences, plain language only for a small business owner:
+1. Say what the visits and market share mean in real life.
+2. Explain the likely reason in simple terms, such as nearby competitors or customer access.
+3. Mention one important limitation: this does not include rent, parking, visibility, zoning, or demographics.
 """
 
     response = client.chat.completions.create(
@@ -594,9 +592,9 @@ In 3-4 short sentences, plain language only (no jargon, no academic phrasing):
             {
                 "role": "system",
                 "content": (
-                    "You are a decision-support assistant for a Worcester store-location tool. "
+                    "You are the locationIQ advisor for a Worcester store-location tool. "
                     "Write in plain, practical language a small business owner would use. "
-                    "No academic phrasing, no 'spatial interaction dynamics' or 'distance-decay parameters'. "
+                    "Avoid model jargon, academic phrasing, and raw technical details. "
                     "Be brief and useful."
                 )
             },

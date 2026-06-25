@@ -36,6 +36,7 @@ const PLACEHOLDERS = {
   category: "Type a category, NAICS code, or pick a chip…",
   location: "Type 42.26, -71.80 — or click anywhere on the map",
   floor_area: "Enter floor area in m² (e.g. 1000)",
+  confirm: "Type 'yes' to run, or edit any input below",
   ready: "Ask about site feasibility, compare scenarios…",
 };
 
@@ -59,28 +60,36 @@ function renderQuickChips() {
     const popularChips = POPULAR_CATS
       .map(code => cats.find(c => c.naics === code))
       .filter(Boolean);
+    // "Browse all" used to fire window.prompt() (an ugly native dialog
+     //  listing every NAICS — easy to mis-type, terrible on mobile). It is
+     //  now a real <select> rendered inline as a chip; clicking it opens the
+     //  browser's native dropdown picker (a proper menu on desktop, a wheel
+     //  picker on iOS, etc.). onchange submits the NAICS like any other chip.
+    const optionsHtml = cats.map(c =>
+      `<option value="${c.naics}">${escapeHtml(c.label)} (${c.naics})</option>`
+    ).join("");
+
     quickChips.innerHTML =
       popularChips.map(c =>
         `<button type="button" data-send="${c.naics}">${escapeHtml(c.label)}</button>`
       ).join("") +
-      `<button type="button" class="more" id="chipBrowseAll">▾ Browse all (${cats.length})</button>`;
+      `<label class="chip-select-wrap" title="Browse all calibrated categories">
+         <select id="chipBrowseAll" class="chip-select">
+           <option value="" selected disabled>▾ Browse all (${cats.length})</option>
+           ${optionsHtml}
+         </select>
+       </label>`;
 
-    document.getElementById("chipBrowseAll").addEventListener("click", () => {
-      const sel = document.getElementById("categorySelect");
-      if (!sel) return;
-      const code = window.prompt(
-        "Pick a NAICS code:\n\n" +
-        cats.map((c, i) => `${i + 1}. ${c.label} (${c.naics})`).join("\n") +
-        "\n\nType the number or paste a NAICS code:"
-      );
-      if (!code) return;
-      const trimmed = code.trim();
-      const idx = Number(trimmed);
-      const picked = Number.isInteger(idx) && idx >= 1 && idx <= cats.length
-        ? cats[idx - 1].naics
-        : trimmed;
-      submitChip(picked);
-    });
+    const browseSelect = document.getElementById("chipBrowseAll");
+    if (browseSelect) {
+      browseSelect.addEventListener("change", () => {
+        const picked = browseSelect.value;
+        if (picked) {
+          submitChip(picked);
+          browseSelect.value = "";   // reset so re-opening shows the placeholder
+        }
+      });
+    }
   } else if (state.step === "location") {
     quickChips.innerHTML = LOCATION_PRESETS.map(p =>
       `<button type="button" data-send="${p.lat}, ${p.lon}">${escapeHtml(p.label)}</button>`
@@ -89,6 +98,15 @@ function renderQuickChips() {
     quickChips.innerHTML = AREA_PRESETS.map(a =>
       `<button type="button" data-send="${a}">${a.toLocaleString()} m²</button>`
     ).join("");
+  } else if (state.step === "confirm") {
+    // After all three inputs are captured the user must confirm before the
+    // model actually runs (no "Running the model now…" until then).
+    quickChips.innerHTML = `
+      <button type="button" class="confirm-yes" data-send="yes, run the model">✓ Confirm & run</button>
+      <button type="button" data-send="edit category">Edit category</button>
+      <button type="button" data-send="edit location">Edit location</button>
+      <button type="button" data-send="edit area">Edit area</button>
+    `;
   } else {
     // ready — follow-up actions only
     quickChips.innerHTML = `
@@ -265,7 +283,7 @@ if (resetBtn) {
     if (shareEl) shareEl.textContent = "—";
     if (compEl) compEl.textContent = "—";
     if (runtimeEl) runtimeEl.textContent = "—";
-    if (runtimeNote) runtimeNote.textContent = "model execution";
+    if (runtimeNote) runtimeNote.textContent = "processing time";
     document.querySelectorAll("#visitsBars span").forEach(b => {
       b.style.height = "30%";
       b.classList.remove("peak");
@@ -273,7 +291,7 @@ if (resetBtn) {
     const compTable = document.getElementById("competitorTable");
     if (compTable) {
       compTable.innerHTML =
-        '<div class="result-empty">Run the model to see competitors.</div>';
+        '<div class="result-empty">Pick a location and run a check to see similar businesses nearby.</div>';
     }
     if (competitorChart) {
       competitorChart.destroy();
@@ -441,16 +459,73 @@ async function handleSend() {
       }
 
       state.floor_area = area;
-      state.step = "ready";
+      state.step = "confirm";
       renderInputCard();
+      promptConfirmation();
+      return;
+    }
 
-      addBotMessage(
-        `Thanks. I will run the Huff model for NAICS ${state.business_category}, ` +
-        `location (${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}), ` +
-        `and floor area ${state.floor_area} square meters.`
-      );
-
-      await runModel();
+    if (state.step === "confirm") {
+      const t = text.toLowerCase();
+      if (/^(yes|y|run|go|confirm|ok|okay|sure|yep|yeah)\b/.test(t)) {
+        // Pre-validate NAICS BEFORE we emit "Running the model now…".
+        // naicsTier() returns 'calibrated' | 'fallback' | 'unknown'.
+        const tier = window.naicsTier ? window.naicsTier(state.business_category) : "calibrated";
+        if (tier === "unknown") {
+          addBotMessage(
+            `There are no historical records for NAICS ${state.business_category} in our ` +
+            "Worcester dataset, so the model cannot produce results. Pick a different category."
+          );
+          state.step = "category";
+          renderInputCard();
+          return;
+        }
+        if (tier === "fallback") {
+          addBotMessage(
+            `Quick note: we have fewer past examples for business category ${state.business_category}, ` +
+            "so treat the result as a rough estimate."
+          );
+        }
+        state.step = "ready";
+        renderInputCard();
+        await runModel();
+        return;
+      }
+      if (/(edit|change).*(category|naics|business)/.test(t) || /^edit category/.test(t)) {
+        state.step = "category";
+        renderInputCard();
+        addBotMessage("Okay — pick a new category or type a NAICS code.");
+        return;
+      }
+      if (/(edit|change).*(location|lat|lon|coord|pin|spot)/.test(t) || /^edit location/.test(t)) {
+        state.step = "location";
+        renderInputCard();
+        addBotMessage("Okay — click a new location on the map, or type coordinates like 42.27, -71.80.");
+        return;
+      }
+      if (/(edit|change).*(area|size|floor|sq)/.test(t) || /^edit area/.test(t)) {
+        state.step = "floor_area";
+        renderInputCard();
+        addBotMessage("Okay — enter the new floor area in square meters.");
+        return;
+      }
+      // Allow inline edits (e.g. user types new coords/area/category right
+      // here) — apply them and re-prompt confirmation.
+      const update = parsePartialUpdate(text);
+      if (update) {
+        if (update.business_category) state.business_category = update.business_category;
+        if (update.candidate_lat !== undefined) {
+          state.candidate_lat = update.candidate_lat;
+          state.candidate_lon = update.candidate_lon;
+          if (window.setCandidateLocation) {
+            window.setCandidateLocation(state.candidate_lat, state.candidate_lon, false);
+          }
+        }
+        if (update.floor_area) state.floor_area = update.floor_area;
+        promptConfirmation();
+        return;
+      }
+      addBotMessage("Type 'yes' to confirm and run, or 'edit category / location / area' to revise.");
       return;
     }
 
@@ -482,9 +557,9 @@ async function rerunModelFromMessage(inputs) {
   if (window.showCategoryPois) window.showCategoryPois(state.business_category);
 
   addBotMessage(
-    `I found a new complete input set. Rerunning the Huff model for NAICS ${state.business_category}, ` +
-    `location (${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}), ` +
-    `and floor area ${state.floor_area} square meters.`
+    `I found a complete new site to check. I will use business category ${state.business_category}, ` +
+    `the location (${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}), ` +
+    `and a ${formatNumber(state.floor_area)} square meter space.`
   );
 
   if (window.setCandidateLocation) {
@@ -494,8 +569,35 @@ async function rerunModelFromMessage(inputs) {
   await runModel();
 }
 
+function promptConfirmation() {
+  const label = state.business_category_label
+    ? `${state.business_category_label} (NAICS ${state.business_category})`
+    : `NAICS ${state.business_category}`;
+  addBotMessage(
+    "Please review your inputs before I run the model:\n" +
+    `  • Business: ${label}\n` +
+    `  • Location: ${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}\n` +
+    `  • Floor area: ${formatNumber(state.floor_area)} m²\n\n` +
+    "Tap ✓ Confirm & run to start, or any Edit chip to change one input."
+  );
+}
+
 async function runModel() {
-  addBotMessage("Running the model now...");
+  // Final NAICS validation: never emit "Running the model now…" for a code
+  // we already know is unsupported. Lets unknown / fallback paths surface
+  // before the server round-trip so the user sees one clean message.
+  const tier = window.naicsTier ? window.naicsTier(state.business_category) : "calibrated";
+  if (tier === "unknown") {
+    addBotMessage(
+      `There are no historical records for NAICS ${state.business_category} in our ` +
+      "Worcester dataset, so the model cannot produce results. Pick a different category."
+    );
+    state.step = "category";
+    renderInputCard();
+    return;
+  }
+
+  addBotMessage("Checking this location now...");
 
   const response = await fetch("/api/run_huff", {
     method: "POST",
@@ -538,6 +640,9 @@ async function runModel() {
   // user knows where to look for the competitor chart and table.
   if (window.flashDetailsReady) window.flashDetailsReady();
 
+  const realWorldSummary = buildPlainResultSummary(data.result);
+  data.explanation = realWorldSummary + (data.explanation ? "\n\n" + data.explanation : "");
+
   let tierNote = "";
   if (data.naics_tier === "fallback") {
     tierNote =
@@ -546,11 +651,56 @@ async function runModel() {
   }
 
   addBotMessage(
-    tierNote +
+    (data.naics_tier === "fallback"
+      ? `A quick note: we have fewer past examples for business category ${state.business_category}, so treat this as a rough estimate rather than a final answer.\n\n`
+      : tierNote) +
     (data.explanation ? data.explanation + "\n\n" : "") +
-    "You can now: (a) ask follow-up questions, (b) click a new spot on the map to rerun there, " +
-    "(c) type 'use NAICS 5121', 'change category to gym', or '1500 sqm' to update just one input, " +
-    "or (d) click \"Start over\" to reset."
+    "Next, you can ask what this means, compare a saved site, click a new spot on the map, " +
+    "or change the business type, location, or store size."
+  );
+}
+
+function buildPlainResultSummary(result) {
+  const visits = formatNumber(result.predicted_visits);
+  const share = Number(result.market_share);
+  const shareText = Number.isFinite(share) ? (share * 100).toFixed(1) + "%" : "not available";
+  const competitors = Array.isArray(result.competitors) ? result.competitors : [];
+  const competitorCount = competitors.length;
+
+  const strongestCompetitor = competitors
+    .map(c => ({
+      name: String(c.name ?? c.place_name ?? c.poi_name ?? "a nearby competitor"),
+      share: Number(c.market_share ?? 0)
+    }))
+    .filter(c => Number.isFinite(c.share) && c.share > 0)
+    .sort((a, b) => b.share - a.share)[0];
+
+  let competitorText = "We didn't find any similar businesses nearby, so you'd have little direct competition in this area.";
+  if (competitorCount > 0 && strongestCompetitor) {
+    competitorText =
+      `There ${competitorCount === 1 ? "is" : "are"} ${competitorCount} similar business${competitorCount === 1 ? "" : "es"} nearby. ` +
+      `${strongestCompetitor.name} is currently the biggest player in this area.`;
+  } else if (competitorCount > 0) {
+    competitorText =
+      `There ${competitorCount === 1 ? "is" : "are"} ${competitorCount} similar business${competitorCount === 1 ? "" : "es"} already operating nearby.`;
+  }
+
+  let shareExplain = "";
+  if (Number.isFinite(share)) {
+    if (share >= 0.15) {
+      shareExplain = "That's a strong share — this location could attract a good chunk of nearby customers.";
+    } else if (share >= 0.05) {
+      shareExplain = "That's a moderate share — you'd capture a reasonable portion of nearby customers, but competition is present.";
+    } else {
+      shareExplain = "That's a smaller share — competition is stiff in this area, so standing out will take extra effort.";
+    }
+  }
+
+  return (
+    `Here's what this means for your business: based on foot traffic patterns, this location could bring in roughly ${visits} customers per month. ` +
+    `That works out to about ${shareText} of the people shopping for this type of business nearby. ${shareExplain}\n\n` +
+    `${competitorText}\n\n` +
+    "Keep in mind: this is a starting point. You'll also want to consider rent, parking, how visible the storefront is from the street, local zoning rules, and the types of people who live and work nearby."
   );
 }
 
@@ -602,7 +752,7 @@ function renderResult(result) {
   const runtimeNote = document.getElementById("runtimeNote");
   if (compEl) compEl.textContent = String(competitorCount);
   if (runtimeEl) runtimeEl.textContent = formatNumber(runtime);
-  if (runtimeNote) runtimeNote.textContent = notes ? notes.split(".")[0] : "model execution";
+  if (runtimeNote) runtimeNote.textContent = notes ? notes.split(".")[0] : "processing time";
 
   // Mirror the headline numbers into the bottom-left glass cards.
   const visitsEl = document.getElementById("visitsValue");
@@ -636,7 +786,7 @@ function renderResult(result) {
   const competitors = Array.isArray(result.competitors) ? result.competitors : [];
 
   if (competitors.length === 0) {
-    tableWrap.innerHTML = "<div class='result-empty'>No competitor records returned.</div>";
+    tableWrap.innerHTML = "<div class='result-empty'>No similar businesses found nearby for this category.</div>";
     return;
   }
 
@@ -647,10 +797,10 @@ function renderResult(result) {
     <table>
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Distance</th>
-          <th>Size</th>
-          <th>Market share</th>
+          <th>Business Name</th>
+          <th>How Far Away</th>
+          <th>Store Size</th>
+          <th>Their Share</th>
         </tr>
       </thead>
       <tbody>
@@ -710,7 +860,7 @@ function renderCompetitorChart(competitors) {
     data: {
       labels: top.map(t => t.name.length > 22 ? t.name.slice(0, 20) + "…" : t.name),
       datasets: [{
-        label: "Market share (%)",
+        label: "Their share of customers (%)",
         data: top.map(t => t.sharePct),
         backgroundColor: "#2563eb"
       }]
@@ -723,7 +873,7 @@ function renderCompetitorChart(competitors) {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: (ctx) => `${ctx.parsed.x.toFixed(2)}% of category visits`
+            label: (ctx) => `${ctx.parsed.x.toFixed(2)}% of nearby customers`
           }
         }
       },
@@ -824,14 +974,14 @@ function renderScenarios() {
     return `
       <div class="scenario-card ${isBest ? "best" : ""}">
         <button class="remove" data-id="${s.id}" title="Remove">&times;</button>
-        ${isBest ? '<span class="badge">Best predicted visits</span>' : ""}
+        ${isBest ? '<span class="badge">Most customers</span>' : ""}
         <h4>Scenario #${i + 1}</h4>
-        <div class="row"><span class="k">NAICS</span><span class="v">${escapeHtml(s.inputs.business_category)}</span></div>
-        <div class="row"><span class="k">Lat, Lon</span><span class="v">${s.inputs.candidate_lat.toFixed(4)}, ${s.inputs.candidate_lon.toFixed(4)}</span></div>
-        <div class="row"><span class="k">Floor area</span><span class="v">${formatNumber(s.inputs.floor_area)} m²</span></div>
-        <div class="row"><span class="k">Visits</span><span class="v">${formatNumber(v)}</span></div>
-        <div class="row"><span class="k">Market share</span><span class="v">${Number.isFinite(ms) ? (ms * 100).toFixed(2) + "%" : "N/A"}</span></div>
-        <div class="row"><span class="k">Competitors</span><span class="v">${Array.isArray(s.result.competitors) ? s.result.competitors.length : 0}</span></div>
+        <div class="row"><span class="k">Business Type</span><span class="v">${escapeHtml(s.inputs.business_category)}</span></div>
+        <div class="row"><span class="k">Location</span><span class="v">${s.inputs.candidate_lat.toFixed(4)}, ${s.inputs.candidate_lon.toFixed(4)}</span></div>
+        <div class="row"><span class="k">Store Size</span><span class="v">${formatNumber(s.inputs.floor_area)} m²</span></div>
+        <div class="row"><span class="k">Expected Customers</span><span class="v">${formatNumber(v)}/mo</span></div>
+        <div class="row"><span class="k">Your Share</span><span class="v">${Number.isFinite(ms) ? (ms * 100).toFixed(2) + "%" : "N/A"}</span></div>
+        <div class="row"><span class="k">Nearby Competitors</span><span class="v">${Array.isArray(s.result.competitors) ? s.result.competitors.length : 0}</span></div>
       </div>
     `;
   }).join("");
@@ -875,13 +1025,13 @@ function renderScenarioChart() {
       labels,
       datasets: [
         {
-          label: "Predicted Visits",
+          label: "Expected Customers",
           data: visits,
           backgroundColor: "#2563eb",
           yAxisID: "yVisits"
         },
         {
-          label: "Market Share (%)",
+          label: "Your Share (%)",
           data: share,
           backgroundColor: "#16a34a",
           yAxisID: "yShare"
@@ -897,14 +1047,14 @@ function renderScenarioChart() {
           type: "linear",
           position: "left",
           beginAtZero: true,
-          title: { display: true, text: "Visits" }
+          title: { display: true, text: "Customers / month" }
         },
         yShare: {
           type: "linear",
           position: "right",
           beginAtZero: true,
           grid: { drawOnChartArea: false },
-          title: { display: true, text: "Share (%)" }
+          title: { display: true, text: "Your share (%)" }
         }
       }
     }

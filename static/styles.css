@@ -175,7 +175,7 @@ body { position: relative; font-size: 14px; line-height: 1.5; }
 .brand-title {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 22px;
+  font-size: 26px;
   letter-spacing: -0.01em;
   background: linear-gradient(135deg, #e0e2e9 0%, #a1c9ff 100%);
   -webkit-background-clip: text;
@@ -412,6 +412,48 @@ body { position: relative; font-size: 14px; line-height: 1.5; }
   background: transparent;
   color: var(--on-surface-variant);
   border-style: dashed;
+}
+
+/* "Browse all" chip is now a native <select> styled to match the other chips.
+   Clicking it opens the browser's dropdown picker instead of the ugly
+   window.prompt() listing we used before. ----------------------------------- */
+.quick-chips .chip-select-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+.quick-chips .chip-select {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px dashed var(--glass-border);
+  color: var(--on-surface-variant);
+  font-family: var(--font-body);
+  font-size: 12px;
+  padding: 6px 28px 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--on-surface-variant) 50%),
+    linear-gradient(135deg, var(--on-surface-variant) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.quick-chips .chip-select:hover,
+.quick-chips .chip-select:focus {
+  background-color: rgba(161, 201, 255, 0.18);
+  color: var(--primary);
+  border-color: rgba(161, 201, 255, 0.4);
+  border-style: solid;
+  outline: none;
+}
+.quick-chips .chip-select option {
+  background: var(--surface-container);
+  color: var(--on-surface);
 }
 
 .input-card {
@@ -680,17 +722,99 @@ body { position: relative; font-size: 14px; line-height: 1.5; }
 .layer-title { font-weight: 600; font-size: 13px; }
 .layer-sub { font-size: 11px; color: var(--on-surface-variant); }
 
-/* Details drawer ---------------------------------------------------------- */
+/* Details drawer — moved to the LEFT side per the latest UI pass.
+   The right side is already crowded with the advisor + chat input; pinning
+   the drawer to the left makes its presence impossible to miss and removes
+   the overlap with the advisor that the right-anchored version caused. ---- */
 .details-drawer {
   position: fixed;
-  right: 420px;
+  left: 20px;
   top: 92px;
-  bottom: 20px;
-  width: 420px;
+  bottom: 280px; /* leave room for the bottom-stack mini cards */
+  width: 380px;
   z-index: 16;
-  padding: 24px;
+  padding: 20px;
   overflow-y: auto;
   border-radius: var(--r-md);
+}
+
+/* Left-edge handle ("Details") — always-visible vertical tab. Pulses with a
+   pill-shaped "Results ready" badge after a model run. ---------------------- */
+.details-handle {
+  position: fixed;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 22;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  color: var(--on-surface);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  background: rgba(28, 32, 37, 0.78);
+}
+.details-handle:hover {
+  background: rgba(161, 201, 255, 0.14);
+  border-color: var(--primary-container);
+  color: var(--primary);
+}
+.details-handle .handle-icon { font-size: 18px; }
+.details-handle .handle-label { letter-spacing: 0.06em; text-transform: uppercase; font-size: 11px; }
+.details-handle .handle-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255, 183, 130, 0.35), rgba(213, 122, 43, 0.45));
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  animation: badge-pulse 1.6s ease-in-out infinite;
+}
+.details-handle .handle-badge[hidden] { display: none; }
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 183, 130, 0.55); }
+  50%      { box-shadow: 0 0 0 8px rgba(255, 183, 130, 0); }
+}
+
+/* Toggle-handle and stat-stack visibility when the drawer is open is managed
+   by JS (the handle precedes the drawer in DOM order, so ~ selectors can't
+   reach it). See the open()/close() handlers in index.html. */
+
+/* Mobile tab bar — only visible on narrow screens (rule lives in @media). */
+.mobile-tabs {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: none;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+}
+.mobile-tab {
+  background: transparent;
+  border: none;
+  color: var(--on-surface-variant);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mobile-tab.active {
+  background: rgba(161, 201, 255, 0.18);
+  color: var(--primary);
 }
 .details-drawer[hidden] { display: none !important; }
 .details-drawer h2 { font-family: var(--font-display); font-size: 18px; margin: 0; }
@@ -813,19 +937,225 @@ body { position: relative; font-size: 14px; line-height: 1.5; }
 
 /* Responsive -------------------------------------------------------------- */
 @media (max-width: 1280px) {
-  .details-drawer { right: 420px; width: 380px; }
+  .details-drawer { width: 360px; }
 }
 @media (max-width: 1100px) {
-  .details-drawer { right: 20px; top: 92px; width: min(420px, calc(100vw - 40px)); }
+  .details-drawer { width: min(360px, calc(100vw - 40px)); bottom: 260px; }
   .advisor-panel { width: 340px; }
 }
+
+/* Mobile (≤860px): SPLIT-SCREEN layout.
+   ┌──────────────────────────┐
+   │   top-dock (≈56px)       │  brand · about · save
+   ├──────────────────────────┤
+   │                          │
+   │   MAP  (always visible)  │  top half of viewport
+   │   • location pill        │
+   │   • compact stat strip   │
+   │                          │
+   ├── [ Chat | Details ] ────┤  tab bar at the 50vh seam
+   │                          │
+   │   active pane            │  chat advisor OR details drawer
+   │   (chat by default)      │
+   │                          │
+   └──────────────────────────┘
+   Tabs only toggle the bottom half — the map never disappears. ------------- */
 @media (max-width: 860px) {
-  .top-dock { flex-wrap: wrap; gap: 10px; }
-  .dock-search { order: 3; flex-basis: 100%; }
-  .advisor-panel { width: calc(100vw - 40px); top: auto; bottom: 20px; height: 60vh; }
-  .bottom-stack { display: none; }
-  .details-drawer { width: calc(100vw - 40px); }
-  .location-pill { top: 150px; }
+  :root {
+    --dock-h: 56px;
+    --tabs-h: 44px;
+    --split-y: 50vh;       /* where the map ends / bottom pane starts */
+    --map-end: calc(var(--split-y) - (var(--tabs-h) / 2));
+    --bottom-start: calc(var(--split-y) + (var(--tabs-h) / 2));
+  }
+
+  /* Top dock — compact, never wraps. */
+  .top-dock {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 12px;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    height: var(--dock-h);
+  }
+  .dock-status { display: none; }
+  .brand { gap: 8px; padding-left: 2px; min-width: 0; flex: 1; }
+  .brand-mark { width: 30px; height: 30px; font-size: 13px; }
+  .brand-title {
+    font-size: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .brand-sub { font-size: 9px; letter-spacing: 0.06em; }
+  .dock-actions { gap: 6px; flex-shrink: 0; }
+  .icon-btn { width: 32px; height: 32px; font-size: 14px; }
+
+  /* Hide the desktop left-edge handle — tab bar replaces it. */
+  .details-handle { display: none; }
+
+  /* MAP — locked to top half. NOTE: do NOT use the `inset` shorthand here;
+     it overrides top/bottom set individually and leaves the container with
+     no height, which is why the tiles were rendering blank. */
+  .map-canvas {
+    top: calc(var(--dock-h) + 18px);
+    bottom: var(--map-end);
+    left: 0;
+    right: 0;
+  }
+
+  /* Location pill — small banner just under the dock, never overflows. */
+  .location-pill {
+    top: calc(var(--dock-h) + 22px);
+    left: 12px;
+    right: 12px;
+    transform: none;
+    width: auto;
+    max-width: none;
+    padding: 7px 14px;
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: center;
+  }
+
+  /* STAT STRIP — tight 2x2 grid floating at the bottom edge of the map area.
+     Never crosses the tab bar; never crosses into the bottom pane. */
+  .bottom-stack {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(var(--map-end) + 8px);
+    width: auto;
+    max-width: none;
+    gap: 6px;
+  }
+  .stack-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .mini-card {
+    padding: 8px 10px;
+    min-height: 0;
+    border-radius: 12px;
+  }
+  .mini-card-compact { padding: 8px 10px; min-height: 0; }
+  .mini-card .mini-value { font-size: 16px; }
+  .mini-card-compact .mini-value { font-size: 14px; margin-top: 0; }
+  .mini-value-sm { font-size: 14px !important; }
+  .mini-label { font-size: 9px; letter-spacing: 0.06em; }
+  .mini-foot { font-size: 9px; margin-top: 0; }
+  .mini-bars { display: none; }
+  .growth-icon { display: none; }
+  .growth-card { padding: 8px 10px; }
+  .growth-value { font-size: 16px; }
+  .growth-label { font-size: 9px; margin-top: 0; }
+
+  /* Demand-grid pill — hidden on mobile to give the stat strip room. */
+  .layer-pill { display: none; }
+
+  /* TAB BAR — sits INSIDE the top-right corner of the bottom pane, where the
+     X close button used to live. Visually anchored to whichever pane is
+     active (chat or details), so the user reads the icons as "switch this
+     half of the screen". */
+  .mobile-tabs {
+    display: flex;
+    bottom: auto;
+    top: calc(var(--bottom-start) + 10px);
+    left: auto;
+    right: 12px;
+    transform: none;
+    padding: 3px;
+    gap: 3px;
+    border-radius: 999px;
+    z-index: 25;
+  }
+  .mobile-tab {
+    padding: 6px 10px;
+    font-size: 14px;
+    min-width: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mobile-tab .tab-icon {
+    font-size: 16px;
+    line-height: 0;            /* keep inline SVG vertically centered */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: currentColor;
+  }
+  .mobile-tab .tab-icon svg { display: block; }
+  .mobile-tab.active .tab-icon { color: var(--primary); }
+  .mobile-tab .tab-label { display: none; }   /* icons-only on mobile */
+
+  /* Hide the X close button inside the details drawer on mobile — the tab
+     bar already lets the user leave the details view. */
+  .drawer-head #closeDetailsBtn { display: none; }
+  /* Reserve room in the pane headers so their titles don't slide under the
+     tab pill that floats in the top-right corner. */
+  .drawer-head,
+  .advisor-head { padding-right: 96px; }
+  .drawer-head { margin-bottom: 6px; }
+
+  /* BOTTOM PANE — chat OR details, swapped by the tab bar. */
+  .advisor-panel,
+  .details-drawer {
+    position: fixed;
+    top: var(--bottom-start);
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: auto;
+    height: auto;
+    padding: 14px 14px 12px;
+    border-radius: 20px 20px 0 0;
+    z-index: 16;
+  }
+  .advisor-panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .advisor-head { padding-bottom: 8px; }
+  .advisor-title { font-size: 14px; }
+  .advisor-sub { font-size: 10px; }
+  .chat-messages { font-size: 13px; }
+  .advisor-input { padding: 6px 8px; gap: 6px; }
+  .advisor-input input { font-size: 13px; }
+
+  .details-drawer h2 { font-size: 15px; }
+  .details-drawer h3 { font-size: 11px; margin: 14px 0 8px; }
+  .details-drawer { padding-top: 16px; }
+
+  /* Pane gating — bottom half only. Map + stat strip always remain visible. */
+  body[data-mobile-pane="chat"] .details-drawer { display: none !important; }
+  body[data-mobile-pane="details"] .advisor-panel { display: none !important; }
+}
+
+/* Very narrow phones (≤380px): tighten further. ------------------------- */
+@media (max-width: 380px) {
+  :root { --dock-h: 50px; }
+  .brand-title { font-size: 14px; }
+  .brand-sub { display: none; }
+  .top-dock { padding: 6px 10px; }
+  .icon-btn { width: 30px; height: 30px; font-size: 13px; }
+  .mini-card .mini-value, .mini-card-compact .mini-value, .growth-value { font-size: 14px; }
+  .location-pill { font-size: 11px; padding: 6px 12px; }
+  .mobile-tab { padding: 5px 14px; font-size: 11px; }
+}
+
+/* Confirm-step chip emphasis — the green "Confirm & run" stands out so the
+   user can never miss the explicit confirmation step. ---------------------- */
+.quick-chips .confirm-yes {
+  background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%);
+  color: #052e1b;
+  border-color: rgba(74, 222, 128, 0.55);
+  font-weight: 700;
+}
+.quick-chips .confirm-yes:hover {
+  background: linear-gradient(135deg, #65e591 0%, #19b352 100%);
 }
 
 /* "Results ready" attention badge on the details button -------------------- */

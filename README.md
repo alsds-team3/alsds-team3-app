@@ -1,14 +1,14 @@
-# ALSDS · Team 3 — Worcester Venture Map
+# locationIQ — Worcester Venture Map
 
 **AI-Assisted Location Decision Support System** for evaluating retail/business
-sites in Worcester, MA. Built by Team 3 for the Urban Analytics AI Consultancy
+sites in Worcester, MA. Built by locationIQ for the Urban Analytics AI Consultancy
 capstone (Modules 1–10).
 
 A small-business owner drops a candidate pin on the Worcester map, picks a
 business category (or types a plain label like "bakery"), and our chatbot
-runs a Huff gravity model against the Azure SQL backend to predict monthly
-visits, market share, and competitive pressure — with plain-language
-explanations from Atlas AI (Azure OpenAI / GPT-4o).
+checks the site against the Azure SQL backend to estimate monthly visits,
+market share, and competitive pressure, with plain-language explanations
+from the locationIQ advisor.
 
 Live deployment: [see Azure App Service URL in the team submission](https://alsds-team3-app-cye8dsgtfbckdxhd.eastus-01.azurewebsites.net/)
 
@@ -109,7 +109,7 @@ python run_local.py
 
 ## Module 8 UI improvements
 
-- Bold team-branded title (Team 3 · ALSDS) in the top dock.
+- Bold locationIQ title in the top dock.
 - About Us modal (ⓘ button) with team identity, stack, and capabilities.
 - Bottom-left mini-cards now carry predicted visits, market share,
   competitor count, and runtime — pulled out of the chat pane to reduce
@@ -140,4 +140,4 @@ python run_local.py
 
 ## Team
 
-Team 3 — Northeastern University, Urban Analytics AI Consultancy (Spring 2026).
+locationIQ — Northeastern University, Urban Analytics AI Consultancy (Spring 2026).

@@ -21,6 +21,19 @@ function isInWorcester(lat, lon) {
 
 const map = L.map("map").setView([42.2626, -71.8023], 12);
 
+// Leaflet caches the container size at init. When the responsive layout
+// flips into split-screen mode (or the bottom-pane tab toggles), the map's
+// container resizes but Leaflet keeps drawing tiles for the old box —
+// resulting in a blank dark area. Call invalidateSize() whenever the
+// container changes so tiles render correctly.
+window.invalidateMapSize = function () {
+  try { map.invalidateSize(); } catch (_) { /* ignore */ }
+};
+window.addEventListener("resize", () => window.invalidateMapSize());
+window.addEventListener("orientationchange", () => window.invalidateMapSize());
+// Run once after first paint so the initial mobile layout settles.
+setTimeout(() => window.invalidateMapSize(), 60);
+
 fetch("/api/bounds")
   .then(r => r.ok ? r.json() : null)
   .then(b => {
